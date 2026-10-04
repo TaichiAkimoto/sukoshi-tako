@@ -26,7 +26,7 @@ A Claude Code plugin that lets you play "Sukoshi Tako", a 3D camouflage hide-and
 
 ## Windows / Linux 対応の準備
 
-Windows と Linux でも遊べるようにする準備をしています。まだゲームは動きません。Windows か Linux で Claude Code を使っていて、動作確認(2〜3 分、ゲームなし)を手伝ってくださる方は [WINDOWS-CHECK.md](WINDOWS-CHECK.md) を見てください。
+Windows と Linux でも遊べるようにする準備をしています。まだゲームは動きません。Windows か Linux で Claude Code を使っていて、動作確認(5 分ほど、ゲームなし)を手伝ってくださる方は [WINDOWS-CHECK.md](WINDOWS-CHECK.md) を見てください。
 
 ## 必要なもの
 
