@@ -2,34 +2,48 @@
 // 作業が終わるか、Claude があなたを必要としたら、すぐに戻す。
 
 import {
+  commandAction,
+  commandNames,
+  engineSize,
   DROP_IN_DELAY_MS,
   canShowPixels,
   checksumMatches,
+  engineEntryFor,
+  enginePathFor,
+  fetchPlan,
   idlePointer,
   initialState,
   inputFileText,
   inputPathFor,
+  isStartStillWanted,
   isPlayingPhase,
+  NEEDS_TERMINAL,
   newEngineSession,
+  PANE_HEIGHT,
+  PANE_WIDTH,
+  packPathFor,
+  paneOpenArgs,
+  removeFileArgv,
+  paneView,
+  parseEngineAssets,
   parseEngineLine,
-  parseEngineManifest,
+  platformKey,
+  playMode,
   pushEvent,
   reduce,
   releasedPointer,
   resolveEngineOverride,
-  rowsFor,
   splitLines,
-  stageButtonProps,
+  surfaceOrGuess,
+  unavailableText,
 } from './logic.js'
 
 const PANE = 'sukoshi-tako'
+// plugin.json の name。ファイルで宣言したコマンドは <この名前>:play、<この名前>:off で届く
+const PLUGIN_NAME = 'tako'
 const TITLE = 'すこしタコ'
-const WIDTH = 640
-const HEIGHT = 360
 // 遊んでいない間もエンジンは止めずに待たせる。これだけ離れたら終了させる
 const AWAY_STOP_MS = 5 * 60 * 1000
-
-const NEEDS_TERMINAL = 'すこしタコは Ghostty か kitty のターミナルで遊べます。'
 
 // 出し入れの状態(logic.js の reduce が進める)
 let state = initialState()
@@ -41,6 +55,8 @@ let engine = null
 let frame = null
 let inputPath = null
 let isStarting = false
+// オフにした・ペインを閉じたら進める。準備の途中だった起動は、進んでいたら取りやめる
+let startToken = 0
 // 進行中のゲーム本体の取得と、ペインに出すその進み具合
 let download = null
 let downloadStatus = null
@@ -59,6 +75,11 @@ let eventSeq = 0
 let menuMode = null
 // このターミナルで絵が出せるか。最初の起動時に調べる
 let hasPixels = null
+// このセッションの OS と CPU。1 回だけ調べる
+let platformCache = null
+let isPlatformKnown = false
+// /tako:play の時点で表示先が分からなかったので、ペインを描くときに始める
+let wantsPlay = false
 // SUKOSHI_TAKO_DEBUG=1 のとき、ターミナルから届いたままのキー名と、押下中のキーを画面に出す
 let isDebug = false
 let lastKey = ''
@@ -70,7 +91,10 @@ function cancelTimer() {
 
 async function writeInput($) {
   if (!inputPath) return
-  await $.fs.write(inputPath, inputFileText({ isPlaying: isPlayingPhase(state.phase), keys, pointer, events }))
+  await $.fs.write(
+    inputPath,
+    inputFileText({ isPlaying: isPlayingPhase(state.phase), keys, pointer, events, mode: state.mode }),
+  )
 }
 
 async function sendEvent($, name) {
@@ -93,7 +117,7 @@ async function dispatch($, action) {
         cancelTimer()
         break
       case 'open': {
-        const opened = await $.ui.open({ id: PANE, title: TITLE, focus: true })
+        const opened = await $.ui.open(paneOpenArgs(PANE, TITLE))
         // 置けなかったペインを待たせておくと、ずっと後で急に出てしまう
         if (!opened.isPlaced) await $.ui.close({ id: PANE })
         await dispatch($, { type: 'opened', isPlaced: opened.isPlaced })
@@ -128,6 +152,8 @@ async function goAway($) {
   frame = null
   keys = []
   pointer = idlePointer()
+  // 取得や起動の準備の途中で閉じられた。見る人がいないので、準備が終わっても起動しない
+  if (!engine && isStarting) startToken += 1
   if (!engine) return
   await writeInput($)
   awayTimer?.cancel()
@@ -137,6 +163,7 @@ async function goAway($) {
 async function stopEngine() {
   awayTimer?.cancel()
   awayTimer = null
+  startToken += 1
   // ループを抜けると子プロセスが止まる
   if (engine) await engine.return()
 }
@@ -151,11 +178,34 @@ async function checkPixels($) {
   return hasPixels
 }
 
-function enginePath(root) {
-  return root + '/dist/sukoshi-tako-engine/ChameleonPane'
+// このセッションの OS と CPU。1 回だけ調べる(uname は毎回呼ばない)
+async function platformFor($) {
+  if (!isPlatformKnown) {
+    platformCache = await detectPlatform($)
+    // 調べるのに失敗した(null)ときは覚えない。次にもう一度調べる
+    isPlatformKnown = platformCache !== null
+  }
+  return platformCache
 }
 
-// プラグインの版ごとに、その版用のゲーム本体を 1 回だけ取得する
+// OS の判定。Windows は uname が無いので環境変数を先に見る
+async function detectPlatform($) {
+  const envOS = await $.env.get('OS')
+  if (envOS === 'Windows_NT') {
+    return platformKey({ envOS, processorArchitecture: await $.env.get('PROCESSOR_ARCHITECTURE') })
+  }
+  try {
+    return platformKey({
+      unameS: (await $.process.run(['uname', '-s'])).stdout.trim(),
+      unameM: (await $.process.run(['uname', '-m'])).stdout.trim(),
+    })
+  } catch {
+    return null
+  }
+}
+
+// プラグインの版ごとに、その版用のゲーム本体を 1 回だけ取得する。
+// 戻り値は { platform, asset, plan }。展開済みで engine.json と同じなら取り直さない。
 function ensureEngine($) {
   download ??= downloadEngine($).finally(() => {
     download = null
@@ -169,34 +219,37 @@ async function downloadEngine($) {
     downloadStatus = text
     $.ui.invalidate('ui.render')
   }
-  const manifest = parseEngineManifest(await $.fs.read(root + '/engine.json').catch(() => ''))
-  if (!manifest) throw new Error('engine.json が読めません。')
-  // 展開済みで、engine.json と同じものなら取り直さない
-  const marker = root + '/dist/engine.sha256'
-  if ((await $.fs.exists(enginePath(root))) && (await $.fs.exists(marker))) {
-    if ((await $.fs.read(marker)).trim() === manifest.sha256) return
-  }
-  const system = (await $.process.run(['uname', '-s'])).stdout.trim()
-  if (system !== 'Darwin') throw new Error('いまは macOS だけで遊べます。')
-
-  const archive = root + '/engine.tar.gz'
+  const platform = await platformFor($)
+  const assets = parseEngineAssets(await $.fs.read(root + '/engine.json').catch(() => ''))
+  if (!assets) throw new Error('engine.json が読めません。')
+  const asset = assets[platform]
+  if (!asset) throw new Error('この環境では遊べません。')
   // 取得元の上書きは開発用。どこから取っても、下の照合を通らなければ実行しない
-  const url = (await $.env.get('SUKOSHI_TAKO_ENGINE_URL')) ?? manifest.url
+  const url = (await $.env.get('SUKOSHI_TAKO_ENGINE_URL')) ?? asset.url
+  const plan = fetchPlan({ platform, root, url })
+  if (!plan) throw new Error('この環境では遊べません。')
+  // 展開済みで、engine.json と同じものなら取り直さない
+  if ((await $.fs.exists(plan.engineDir)) && (await $.fs.exists(plan.marker))) {
+    if ((await $.fs.read(plan.marker)).trim() === asset.sha256) return { platform, asset, plan }
+  }
   showStatus('ゲーム本体を取得しています(約 7 MB)…')
-  const fetched = await $.process.run(['curl', '-fsSL', '--retry', '2', '-o', archive, url], { timeoutMs: 10 * 60 * 1000 })
+  const fetched = await $.process.run(plan.download, { timeoutMs: 10 * 60 * 1000 })
   if (fetched.exitCode !== 0) throw new Error('ゲーム本体を取得できませんでした。')
-  const sum = await $.process.run(['shasum', '-a', '256', archive])
-  if (sum.exitCode !== 0 || !checksumMatches(sum.stdout, manifest.sha256)) {
-    await $.process.run(['rm', '-f', archive])
+  const sum = await $.process.run(plan.hash)
+  if (sum.exitCode !== 0 || !checksumMatches(sum.stdout, asset.sha256)) {
+    await $.process.run(plan.removeArchive)
     throw new Error('取得したファイルが想定と違うため、実行しません。')
   }
-  await $.process.run(['rm', '-rf', root + '/dist/sukoshi-tako-engine'])
-  await $.process.run(['mkdir', '-p', root + '/dist'])
-  const unpacked = await $.process.run(['tar', '-xzf', archive, '-C', root + '/dist'])
-  await $.process.run(['rm', '-f', archive])
+  // 展開が途中で失敗しても「展開済み」と見なされないよう、印を先に無効にする
+  if (await $.fs.exists(plan.marker)) await $.fs.write(plan.marker, '')
+  await $.process.run(plan.removeOld)
+  await $.process.run(plan.makeDist)
+  const unpacked = await $.process.run(plan.unpack)
+  await $.process.run(plan.removeArchive)
   if (unpacked.exitCode !== 0) throw new Error('取得したファイルを展開できませんでした。')
-  await $.fs.write(marker, manifest.sha256 + '\n')
+  await $.fs.write(plan.marker, asset.sha256 + '\n')
   showStatus(null)
+  return { platform, asset, plan }
 }
 
 // 開発中は SUKOSHI_TAKO_ENGINE でローカルのビルドを指す("fake" なら同梱の偽エンジン)。
@@ -204,16 +257,19 @@ async function downloadEngine($) {
 // (それ以外の指定は黙って無視し、通常どおり取得して照合する)。
 async function engineRequest($, id) {
   const root = $.plugin.root
+  const mode = state.mode === 'window' ? 'window' : 'pane'
   const override = resolveEngineOverride(
     await $.env.get('SUKOSHI_TAKO_ENGINE'),
     await $.env.get('SUKOSHI_TAKO_DEV'),
   )
+  const size = engineSize(mode)
   const env = {
     // macOS の共有メモリ名は 30 文字まで: "/tk" + 4 文字 + "-" + 連番
     SUKOSHI_TAKO_FRAMES: '/tk' + id + '-',
     SUKOSHI_TAKO_INPUT: inputPath,
-    SUKOSHI_TAKO_WIDTH: String(WIDTH),
-    SUKOSHI_TAKO_HEIGHT: String(HEIGHT),
+    SUKOSHI_TAKO_WIDTH: String(size.width),
+    SUKOSHI_TAKO_HEIGHT: String(size.height),
+    SUKOSHI_TAKO_MODE: mode,
   }
   if (override === 'fake') {
     return { argv: ['python3', '-u', root + '/dev/fake_engine.py'], env }
@@ -224,17 +280,26 @@ async function engineRequest($, id) {
     const folder = override.slice(0, override.lastIndexOf('/'))
     return { argv: [override], env: { ...env, DYLD_FRAMEWORK_PATH: folder + ':' + folder + '/PackageFrameworks' } }
   }
-  await ensureEngine($)
-  return { argv: [enginePath(root)], env }
+  // 本体は、取得のときに照合した配布物だけを起動する。素材のパックは展開先で渡す
+  const { platform, asset, plan } = await ensureEngine($)
+  return {
+    argv: [enginePathFor(root, platform, engineEntryFor(asset, mode))],
+    env: { ...env, SUKOSHI_TAKO_PACK: packPathFor(plan.engineDir, platform) },
+  }
 }
 
 async function runEngine($) {
   // await の前に立てる。待っている間にもう一度呼ばれても、二重には起動しない
   isStarting = true
   const id = Math.random().toString(36).slice(2, 6)
+  const token = startToken
   let request
+  let platform = null
   try {
-    inputPath = inputPathFor(await $.env.get('TMPDIR'), id)
+    platform = await platformFor($)
+    const tmp = platform === 'win32-x64' ? await $.env.get('TEMP') : await $.env.get('TMPDIR')
+    inputPath = inputPathFor(tmp, id, platform)
+    if (!inputPath) throw new Error('一時フォルダの場所が分かりません。')
     scene = 'starting'
     failure = null
     // 前のエンジンの時代に溜まった単発操作・キー・ボタンは、新しいエンジンに渡さない
@@ -249,6 +314,13 @@ async function runEngine($) {
     return
   } finally {
     isStarting = false
+  }
+  // 準備の間にオフにされた・ペインを閉じられたなら、起動しない
+  if (!isStartStillWanted(token, startToken)) {
+    inputPath = null
+    scene = 'menu'
+    downloadStatus = null
+    return
   }
   await writeInput($)
   engine = $.process.spawn(request)
@@ -269,7 +341,7 @@ async function runEngine($) {
     engine = null
     frame = null
     inputPath = null
-    if (path) await $.process.run(['rm', '-f', path]).catch(() => {})
+    if (path) await $.process.run(removeFileArgv(path, platform)).catch(() => {})
   }
   // 遊んでいる最中に終わったなら、エンジンが落ちたか自分で終了した
   if (isPlayingPhase(state.phase)) {
@@ -283,6 +355,8 @@ function handleEngineLine($, message) {
   if (!message) return
   switch (message.type) {
     case 'frame': {
+      // ウィンドウ方式では絵は本体のウィンドウ。ペインには出さない
+      if (state.mode === 'window') break
       const isFirst = frame === null
       frame = message.name
       if (isFirst) $.ui.invalidate('ui.render')
@@ -320,38 +394,31 @@ function handleEngineLine($, message) {
   }
 }
 
-function shmSource(name) {
-  return { shm: name, format: 'rgb', width: WIDTH, height: HEIGHT }
-}
-
-const HELP = {
-  seek: '十字キーか WASD 移動 · ドラッグか IJKL で狙う · クリックか Space で撃つ(押し続けで連射)· R/F 上下 · C 背後 · V 距離 · Enter さがし終わり',
-  hide: '十字キーか WASD 移動 · 右ドラッグか IJKL で視点 · 左ドラッグで塗る · 1 色を拾う · 2 ブラシ · 3 ポーズ · 4 うつす · 5 全身にうつす · Q/E 体の向き · R/F 上下 · Enter ここに隠れる',
-}
-
-function drawMenu($, { Box, Text, Button }) {
-  if (menuMode === null) {
-    return Box({
-      flexDirection: 'column',
-      gap: 1,
-      children: [
-        Text({ bold: true, children: ['全世界モード'] }),
-        Button({ key: 'seek', label: '誰かを探しに行く', hotkey: '1', autoFocus: true, onPress: () => chooseMode($, 'world_seek') }),
-        Button({ key: 'hide', label: '世界に隠れる', hotkey: '2', onPress: () => chooseMode($, 'world_hide') }),
-      ],
-    })
-  }
-  return Box({
-    flexDirection: 'column',
-    gap: 1,
-    children: [
-      Text({ bold: true, children: [menuMode === 'world_seek' ? 'どのコースを探しますか' : 'どのコースで隠れますか'] }),
-      ...stageButtonProps(stages).map((props, index) =>
-        Button({ ...props, onPress: () => chooseStage($, stages[index].id) }),
-      ),
-      Button({ key: 'back', label: '戻る', hotkey: '0', onPress: () => chooseMode($, null) }),
-    ],
+// 表示先と OS で、遊び方を決める(ペイン / ウィンドウ / 遊べない)
+async function modeFor($, surface) {
+  return playMode({
+    surface,
+    hasPixels: await checkPixels($),
+    platform: await platformFor($),
   })
+}
+
+// いまのセッションが描いている表示先から、遊び方を決め直す。
+// 起動直後やコマンドの時点では、表示先がまだ付いていないことがある。そのときは null を返し、
+// 遊び方は変えない(ペインを描くときに drawPane が決める)。
+async function refreshMode($, fallbackSurface) {
+  let surface = fallbackSurface ?? null
+  try {
+    const surfaces = await $.session.surfaces()
+    if (surfaces.length > 0) surface = surfaces[0]
+  } catch {
+    // 表示先が読めないときは、渡されたものだけで決める
+  }
+  surface = surfaceOrGuess(surface, await checkPixels($))
+  if (surface === null) return null
+  const mode = await modeFor($, surface)
+  if (mode !== state.mode) await dispatch($, { type: 'setMode', mode })
+  return mode
 }
 
 function chooseMode($, mode) {
@@ -368,68 +435,140 @@ async function chooseStage($, stageId) {
   await sendEvent($, 'confirm_stage')
 }
 
-function drawGame($, e, { Box, Text, Image, Client }) {
-  if (!frame) return Text({ children: ['読み込んでいます…'] })
-  const columns = Math.min(255, e.props.bodyColumns)
-  const rows = rowsFor(columns, WIDTH, HEIGHT)
-  const status =
-    state.phase === 'countdown'
-      ? Text({ bold: true, children: ['Claude の作業が終わりました · あと ' + state.countdown] })
-      : Text({ dimColor: true, children: [HELP[scene] ?? ''] })
-  return Box({
-    flexDirection: 'column',
-    children: [
-      Image({ key: 'view', source: shmSource(frame), columns, rows, alt: NEEDS_TERMINAL }),
-      // 絵の上に重ねて、クリックとキーをゲームへ渡す
-      Box({
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        children: [Client({ key: 'input', module: './input.js', width: columns, height: rows })],
-      }),
-      ...(hud ? [Text({ children: [hud] })] : []),
-      ...(isDebug
-        ? [Text({ dimColor: true, children: ['届いたキー: ' + JSON.stringify(lastKey) + ' · 押下中: ' + keys.join(' ')] })]
-        : []),
-      status,
-    ],
-  })
+function pressOption($, option) {
+  if (option.action === 'stage') void chooseStage($, option.stageId)
+  else if (option.action === 'mode') chooseMode($, option.mode)
 }
 
-function drawPane($, e) {
-  const elements = $.ui.resolve(e)
-  const { Box, Text, Button } = elements
-  if (e.surface !== 'terminal' || hasPixels === false) return Text({ children: [NEEDS_TERMINAL] })
-  switch (scene) {
-    case 'starting':
-    case 'loading':
-      return Text({ children: [downloadStatus ?? '読み込んでいます…'] })
+function pressButton($, button) {
+  if (button.action === 'event') void sendEvent($, button.event)
+  else if (button.action === 'close') {
+    // 自分でやめた。ゲームのウィンドウを残さない(残すと「Claude が呼んでいます」のまま 5 分居座る)
+    void stopEngine()
+    void $.ui.close({ id: PANE })
+  }
+}
+
+// autoFocus は「true か、付けない」のどちらかでなければ描画が拒否される
+function buttonProps(button) {
+  return {
+    key: button.key,
+    label: button.label,
+    hotkey: button.hotkey,
+    ...(button.autoFocus ? { autoFocus: true } : {}),
+  }
+}
+
+function shmSource(name) {
+  return { shm: name, format: 'rgb', width: PANE_WIDTH, height: PANE_HEIGHT }
+}
+
+// paneView の平たい記述を、その表示先の要素に写す
+function renderView($, elements, view) {
+  const { Box, Text, Button, Image, Client } = elements
+  switch (view.kind) {
+    case 'message':
+      return Text({ children: [view.text] })
     case 'menu':
-      return drawMenu($, elements)
-    case 'hide':
-    case 'seek':
-      return drawGame($, e, elements)
-    case 'published':
-    case 'result':
       return Box({
         flexDirection: 'column',
         gap: 1,
         children: [
-          Text({ bold: true, children: [scene === 'published' ? '世界に隠れました' : '結果'] }),
-          ...(sceneDetail ? [Text({ children: [sceneDetail] })] : []),
-          Button({ key: 'hub', label: 'ハブへ戻る', hotkey: '1', autoFocus: true, onPress: () => sendEvent($, 'back_to_hub') }),
+          Text({ bold: true, children: [view.title] }),
+          ...view.options.map((option) => Button({ ...buttonProps(option), onPress: () => pressOption($, option) })),
+        ],
+      })
+    case 'game':
+      return Box({
+        flexDirection: 'column',
+        children: [
+          Image({ key: 'view', source: shmSource(frame), columns: view.image.columns, rows: view.image.rows, alt: NEEDS_TERMINAL }),
+          // 絵の上に重ねて、クリックとキーをゲームへ渡す
+          Box({
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            children: [Client({ key: 'input', module: './input.js', width: view.image.columns, height: view.image.rows })],
+          }),
+          // 操作の説明は絵のすぐ下。数えている間は、残りをそこに出す
+          ...(view.status
+            ? [Text({ bold: true, children: [view.status.text] })]
+            : view.help.map((line, index) => Text({ key: 'help' + index, dimColor: true, children: [line] }))),
+          ...(view.hud ? [Text({ children: [view.hud] })] : []),
+          ...(view.debug ? [Text({ dimColor: true, children: [view.debug] })] : []),
+        ],
+      })
+    case 'windowGame':
+      // ウィンドウ方式のペイン: 絵も入力部品も出さず、案内とボタンだけ
+      return Box({
+        flexDirection: 'column',
+        gap: 1,
+        children: [
+          Text({ children: [view.note] }),
+          ...(view.hud ? [Text({ children: [view.hud] })] : []),
+          Text({ dimColor: true, children: [view.help] }),
+          ...view.keys.map((line, index) => Text({ key: 'keys' + index, dimColor: true, children: [line] })),
+          ...view.buttons.map((button) => Button({ ...buttonProps(button), onPress: () => pressButton($, button) })),
+        ],
+      })
+    case 'outcome':
+      return Box({
+        flexDirection: 'column',
+        gap: 1,
+        children: [
+          Text({ bold: true, children: [view.title] }),
+          ...(view.detail ? [Text({ children: [view.detail] })] : []),
+          Button({ ...buttonProps(view.button), onPress: () => sendEvent($, 'back_to_hub') }),
+        ],
+      })
+    case 'error':
+      return Box({
+        flexDirection: 'column',
+        gap: 1,
+        children: [
+          Text({ children: [view.text] }),
+          ...(view.guidance ? [Text({ children: [view.guidance] })] : []),
+          Button({ ...buttonProps(view.button), onPress: () => retry($) }),
         ],
       })
     default:
-      return Box({
-        flexDirection: 'column',
-        gap: 1,
-        children: [
-          Text({ children: [failure ?? 'うまく動いていません。'] }),
-          Button({ key: 'retry', label: 'もう一度', hotkey: '1', autoFocus: true, onPress: () => retry($) }),
-        ],
-      })
+      return Text({ children: [view.text ?? NEEDS_TERMINAL] })
   }
+}
+
+async function drawPane($, e) {
+  const elements = $.ui.resolve(e)
+  const mode = await modeFor($, e.surface)
+  if (mode !== state.mode) await dispatch($, { type: 'setMode', mode })
+  // /tako:play の時点で表示先が分からなかった分は、ここで始める
+  if (wantsPlay) {
+    wantsPlay = false
+    if (mode !== 'none') {
+      await dispatch($, { type: 'openedByPerson' })
+      void startPlaying($)
+    }
+  }
+  const view = paneView(
+    {
+      ...state,
+      platform: await platformFor($),
+      scene,
+      sceneDetail,
+      hud,
+      stages,
+      menuMode,
+      failure,
+      downloadStatus,
+      isDebug,
+      keys,
+      lastKey,
+      hasFrame: frame !== null,
+      columns: e.props?.bodyColumns,
+      rows: e.props?.scroll?.bodyRows,
+    },
+    mode,
+  )
+  return renderView($, elements, view)
 }
 
 async function retry($) {
@@ -442,33 +581,44 @@ export function register(on) {
     const isOn = (await $.store.get('isOn')) === true
     state = { ...initialState(), isOn }
     isDebug = (await $.env.get('SUKOSHI_TAKO_DEBUG')) === '1'
-    await $.command.register({
-      name: 'tako',
-      description: 'Claude の作業中にすこしタコを遊ぶ',
-      argumentHint: '[off]',
-    })
+    // 表示先が分かるときは、ここで遊び方を決めておく(デスクトップでは後から付くこともある)
+    await refreshMode($, e.surface)
     return next(e)
   })
 
-  on('command.run', { command: 'tako' }, async ($, e) => {
-    if (e.args.trim() === 'off') {
-      await $.store.set('isOn', false)
-      await dispatch($, { type: 'setOn', isOn: false })
-      await stopEngine()
-      return { text: 'すこしタコをオフにしました。' }
-    }
-    await $.store.set('isOn', true)
-    await dispatch($, { type: 'setOn', isOn: true })
-    if (!(await checkPixels($))) return { text: NEEDS_TERMINAL }
-    // 自分で開いたペインは、狭いターミナルでも置かれる
-    await $.ui.open({ id: PANE, title: TITLE, focus: true })
-    await dispatch($, { type: 'openedByPerson' })
-    await startPlaying($)
-    return {}
-  })
+  for (const name of commandNames(PLUGIN_NAME)) {
+    on('command.run', { command: name }, async ($, e) => {
+      if (commandAction(name, e.args) === 'off') {
+        await $.store.set('isOn', false)
+        await dispatch($, { type: 'setOn', isOn: false })
+        await stopEngine()
+        return { text: 'すこしタコをオフにしました。' }
+      }
+      await $.store.set('isOn', true)
+      await dispatch($, { type: 'setOn', isOn: true })
+      // 表示先がいま付いているかを確かめ直す(デスクトップでは起動時に無いことがある)
+      const mode = await refreshMode($)
+      if (mode === 'none') return { text: unavailableText(await platformFor($)) }
+      if (mode === null) {
+        // 表示先がまだ分からない(デスクトップアプリなど)。ペインを開き、描くときに決めて始める
+        wantsPlay = true
+        await $.ui.open(paneOpenArgs(PANE, TITLE))
+        return {}
+      }
+      // 自分で開いたペインは、狭いターミナルでも置かれる
+      await $.ui.open(paneOpenArgs(PANE, TITLE))
+      await dispatch($, { type: 'openedByPerson' })
+      await startPlaying($)
+      return {}
+    })
+  }
 
   on('turn.start', async ($, e, next) => {
-    if (state.isOn && (await checkPixels($))) await dispatch($, { type: 'turnStart' })
+    // ウィンドウ方式では自動で開かない(開くのは /tako:play とペインのボタンだけ)。
+    // それでも印は付けておく。止めていたゲームを次の作業で動かすため
+    // 表示先が分からないうちは開かない(絵が出せるターミナルは、今までどおり開く)
+    const mode = await refreshMode($)
+    if (state.isOn && mode !== null && mode !== 'none') await dispatch($, { type: 'turnStart' })
     return next(e)
   })
 
@@ -513,7 +663,8 @@ export function register(on) {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (state.phase !== 'offered') return next(e)
+    // 帯はターミナルだけのもの。ウィンドウ方式では出さない
+    if (state.mode !== 'pane' || state.phase !== 'offered') return next(e)
     const { Box, Button } = $.ui.resolve(e)
     // 他のプラグインが帯に出しているものは残す
     const others = await next(e)
@@ -526,7 +677,7 @@ export function register(on) {
           hotkey: '1',
           plain: true,
           onPress: async () => {
-            await $.ui.open({ id: PANE, title: TITLE, focus: true })
+            await $.ui.open(paneOpenArgs(PANE, TITLE))
             await dispatch($, { type: 'openedByPerson' })
             await startPlaying($)
           },

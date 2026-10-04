@@ -6,7 +6,7 @@
   },
   "plugins": [
     {
-      "name": "sukoshi-tako",
+      "name": "tako",
       "source": "./"
     },
     {

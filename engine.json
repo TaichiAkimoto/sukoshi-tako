@@ -1,5 +1,13 @@
 {
-  "version": "0.0.2",
-  "url": "https://github.com/TaichiAkimoto/sukoshi-tako/releases/download/v0.0.2/sukoshi-tako-engine-macos.tar.gz",
-  "sha256": "37184c706dfde0f949c02cd0f0bd79b3e3213a3924e5feb6768bbae8e6a7930a"
+  "version": "0.0.3",
+  "url": "https://github.com/TaichiAkimoto/sukoshi-tako/releases/download/v0.0.3/sukoshi-tako-engine-macos.tar.gz",
+  "sha256": "28dccc13fc1149e92bee71a3db402ad01fb5c4107b64d32b3aef6b778313dfbd",
+  "assets": {
+    "darwin": {
+      "url": "https://github.com/TaichiAkimoto/sukoshi-tako/releases/download/v0.0.3/sukoshi-tako-engine-macos.tar.gz",
+      "sha256": "28dccc13fc1149e92bee71a3db402ad01fb5c4107b64d32b3aef6b778313dfbd",
+      "entry": "sukoshi-tako-engine/ChameleonPane",
+      "windowEntry": "sukoshi-tako-engine/SukoshiTako.app/Contents/MacOS/ChameleonPane"
+    }
+  }
 }

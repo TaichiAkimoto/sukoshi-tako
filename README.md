@@ -1,28 +1,29 @@
 # sukoshi-tako(すこしタコ)
 
-Claude が作業している間、ターミナルの横で「すこしタコ」が遊べる Claude Code プラグインです。作業が終わるか、Claude があなたを必要としたら、すぐに元の画面へ戻します。
+Claude が作業している間の待ち時間に「すこしタコ」が遊べる Claude Code プラグインです。Mac の Claude Code なら、ターミナルでもデスクトップアプリでも使えます。Claude があなたを必要としたら、ゲームは止まります。
 
 「すこしタコ」は、体を塗って景色に溶け込む 3D のかくれんぼです。このプラグインでは全世界モードが遊べます。世界のどこかの誰かが隠れた場所を探しに行くか、自分が隠れて誰かに探してもらいます。相手と同じ時間に遊ぶ必要はありません。
 
-A Claude Code plugin that lets you play "Sukoshi Tako", a 3D camouflage hide-and-seek, in a pane beside the transcript while Claude works, and hands you back when it is done or needs you.
+A Claude Code plugin that lets you play "Sukoshi Tako", a 3D camouflage hide-and-seek, while Claude works: in a window of its own, or inside the terminal where the terminal can show pictures. It pauses when Claude needs you. macOS only for now.
 
 ## 入れ方
 
-1. プラグインを入れます。
+1. プラグインを入れます。Claude Code に、次の 2 行を 1 行ずつ打ちます。
 
    ```
-   /plugin install sukoshi-tako --marketplace TaichiAkimoto/sukoshi-tako
+   /plugin marketplace add TaichiAkimoto/sukoshi-tako
+   /plugin install tako@sukoshi-tako
    ```
 
 2. オンにします。
 
    ```
-   /tako
+   /tako:play
    ```
 
    初回だけ、ゲーム本体(約 7 MB)を取得します。
 
-オフにするには `/tako off` です。
+オフにするには `/tako:off` です。ターミナルでもデスクトップアプリでも、コマンドは同じです。
 
 ## Windows / Linux 対応の準備
 
@@ -31,22 +32,28 @@ Windows と Linux でも遊べるようにする準備をしています。ま�
 ## 必要なもの
 
 - macOS(ゲーム本体は Apple silicon と Intel の両方に対応。動作を確かめたのは macOS 27 の Apple silicon だけです)
-- [Ghostty](https://ghostty.org) か [kitty](https://sw.kovidgoyal.net/kitty/)。ゲームの絵を出せるのは、この 2 つのターミナルだけです
-- Claude Code 2.1.287 以降
+- Claude Code 2.1.287 以降。ターミナルの Claude Code でも、Claude デスクトップアプリ(Code タブの Local のセッション)でも使えます
 
-Claude Code のテーマ(`/theme`)とターミナルの配色は、明るいもの同士か暗いもの同士で揃えてください。食い違っていると、ペインの文字が背景と同じ色になって読めません。
+ゲームは別のウィンドウで開き、Claude Code の側にはメニューと操作の説明が出ます。動作を確かめたのは、macOS 標準の「ターミナル」と、Claude デスクトップアプリ 2.19675.0 です。
+
+絵をターミナルの中に出せるターミナル([Ghostty](https://ghostty.org) と [kitty](https://sw.kovidgoyal.net/kitty/))では、別のウィンドウではなく、Claude の会話の横にゲームが出ます。この場合は、Claude Code のテーマ(`/theme`)とターミナルの配色を、明るいもの同士か暗いもの同士で揃えてください(食い違うと文字が読めません)。
 
 ## 動き方
 
-- `/tako` を打つと、ペインが開いてメニューが出ます。
-- オンの間は、Claude が 2 秒以上作業するとペインが開きます。作業が終わると 3 秒数えて閉じます。
+- `/tako:play` を打つと、メニューが出ます。コースを選ぶと、ゲームのウィンドウが開きます。
+- Claude の作業が終わったり、権限の確認や質問が出たりすると、ゲームは止まります(「Claude が呼んでいます」と出ます)。次に Claude が作業を始めると、続きから動きます。
+- 「やめる」を押すと、ゲームのウィンドウも閉じます。
+
+絵をターミナルの中に出せるターミナルでは、次のように動きます。
+
+- オンの間は、Claude が 2 秒以上作業するとゲームが開きます。作業が終わると 3 秒数えて閉じます。
 - 権限の確認や質問が出たら、すぐに閉じます。答えると、また開きます。
-- 自分でペインを閉じたら、その作業の間は開きません。
+- 自分で閉じたら、その作業の間は開きません。
 - ターミナルが狭くて自動で開けないときは、入力欄の上に出るボタン(1 を押す)で開けます。
 
 ## 操作
 
-絵をクリックすると、キーがゲームに届きます。Esc で入力欄に戻ります。
+キーとマウスは、ゲームのウィンドウで操作します。ゲームがターミナルの中に出ている場合は、絵をクリックするとキーがゲームに届き、Esc で入力欄に戻ります。
 
 | キー | 探す | 隠れる |
 | :- | :- | :- |
@@ -64,7 +71,7 @@ Claude Code のテーマ(`/theme`)とターミナルの配色は、明るいも�
 | V | カメラの距離 | — |
 | Enter | さがし終わり | ここに隠れる |
 
-ターミナルはキーを離したことを知らせないので、キーは自動リピートが止まるまで押されている扱いになります。
+ゲームがターミナルの中に出ている場合、ターミナルはキーを離したことを知らせないので、キーは自動リピートが止まるまで押されている扱いになります。
 
 ## 何に接続するか
 
