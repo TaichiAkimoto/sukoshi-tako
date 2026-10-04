@@ -80,6 +80,33 @@ claude plugin marketplace remove sukoshi-tako
 
 送り終わったら、`tako-check-report.txt` と、手順 1 で作った `sukoshi-tako` フォルダは消して構いません。
 
+## 確認その 2: ウィンドウとキー入力(その 1 が動いた方にお願いします)
+
+その 1 が動いたら、もう 1 つお願いします。こちらは、ゲームが実際に行うこと(小さなプログラムを取得して起動し、別のウィンドウを出す)を確かめます。3 分ほどで終わります。
+
+確認用プラグイン `tako-window-check` は、箱を 1 つ描くだけの小さなプログラム(Windows 用は約 4MB)をこのリポジトリのリリースから取得し、SHA-256 を照合してから起動します。ゲームは入っていません。取得したプログラムは、プラグインのフォルダの中(`dist` フォルダ)に置かれます。Windows では、発行元が不明なプログラムとして警告が出るかもしれません。出た場合は、その文面を教えてください(実行を許可するかどうかはお任せします)。
+
+1. ターミナルで次の 2 行を実行します(その 1 でマーケットプレイスを追加済みなら、1 行目は `claude plugin marketplace update sukoshi-tako` に替えてください)。
+
+   ```
+   claude plugin marketplace add TaichiAkimoto/sukoshi-tako
+   claude plugin install tako-window-check@sukoshi-tako
+   ```
+
+2. Claude Code を開き直します。デスクトップアプリなら「Code」タブで新しいセッション(Local)、ターミナルなら `claude` です。
+
+3. デスクトップアプリでは、入力欄に `/tako` と打って候補の `tako-window-check:tako-window-check` を選んで送ります。ターミナルでは `/tako-window-check` と打って Enter を押します。
+
+4. 回る箱のウィンドウが出ます(40 秒で自動的に閉じます)。出たら、次の順に操作してください。
+
+   1. そのウィンドウをクリックする
+   2. 何かキーを 1 つ押して、離す
+   3. 別のウィンドウ(Claude など)をクリックする
+
+5. ホームフォルダにできた `tako-window-check-report.txt` を送ってください。あわせて、ウィンドウが見えたかどうか、警告が出たかどうかを一言ずつ教えてください。
+
+外すときは `claude plugin uninstall tako-window-check` です。
+
 ## 結果に入るもの
 
 `tako-check-report.txt` に入るのは、OS の種類、CPU の種類、Claude Code の版、各コマンドが動いたかどうか(終了コードと出力の 1 行目)、ペインが開いたか、ボタンを押した回数です。ユーザー名、ファイルの中身、会話の内容は入りません(ホームフォルダの場所は `~` に置き換えます)。送る前に中を見て、気になる行があれば消してください。

@@ -12,6 +12,10 @@
     {
       "name": "tako-check",
       "source": "./windows-check"
+    },
+    {
+      "name": "tako-window-check",
+      "source": "./window-check"
     }
   ]
 }
