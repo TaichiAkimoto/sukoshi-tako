@@ -1,0 +1,11 @@
+{
+  "name": "sukoshi-tako",
+  "displayName": "すこしタコ",
+  "version": "0.0.2",
+  "description": "Claude が作業している間、ターミナルの横で「すこしタコ」が遊べます",
+  "author": { "name": "TaichiAkimoto", "url": "https://github.com/TaichiAkimoto" },
+  "homepage": "https://github.com/TaichiAkimoto/sukoshi-tako",
+  "repository": "https://github.com/TaichiAkimoto/sukoshi-tako",
+  "license": "MIT",
+  "keywords": ["game", "hide-and-seek", "camouflage", "mod"]
+}
