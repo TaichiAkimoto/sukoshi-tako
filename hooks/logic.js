@@ -524,7 +524,7 @@ export const NEEDS_TERMINAL = 'すこしタコは、Mac のターミナルか Cl
 export const NEEDS_MAC = 'いまは macOS だけで遊べます。'
 // ウィンドウ方式のペインに出す案内
 export const WINDOW_NOTE = 'ゲームは別のウィンドウに出ています。'
-export const WINDOW_HELP = 'キーとマウスは、ゲームのウィンドウで操作します。'
+export const WINDOW_HELP = 'キーとマウスは、ゲームのウィンドウで操作します。ウィンドウを閉じると終わります。'
 // 本体が起動できなかった・@fatal を出したときの案内(Local 以外のセッションでは開けない)
 export const WINDOW_UNAVAILABLE =
   'ゲームのウィンドウを開けませんでした。この Mac の上で動いている Claude Code から開いてください(Claude デスクトップアプリでは Local のセッション)。'
@@ -546,6 +546,41 @@ const HELP = {
     '1 色を拾う · 2 ブラシ · 3 ポーズ · 4 うつす · 5 全身にうつす',
     'ここに隠れる Enter',
   ],
+}
+
+// 本体のポーズ名 → アプリの中での呼び名
+const POSE_NAMES = {
+  stand: '立ち',
+  idle: '立ち',
+  crouch: 'しゃがみ',
+  sit: '座り',
+  crossLegged: 'あぐら',
+  allFours: '四つん這い',
+  prone: '伏せる',
+  lieDown: '横たわる',
+  sideLie: '横向き寝',
+  curled: '丸まる',
+  bridge: 'ブリッジ',
+  wallFlat: '壁ぴた',
+}
+
+// 本体が送る状態の行(key=value; key=value)を、人が読める形にする。色のコードとボタンの
+// 名前は出さない(見ても何もできない)。知らない形の行はそのまま出す。
+export function readableHud(text) {
+  const line = String(text ?? '')
+  if (!line.includes('=')) return line
+  const shown = []
+  for (const field of line.split('; ')) {
+    const at = field.indexOf('=')
+    if (at < 0) continue
+    const key = field.slice(0, at)
+    const value = field.slice(at + 1)
+    if (key === '色' || key === '確定') continue
+    if (key === 'ポーズ') shown.push('ポーズ: ' + (POSE_NAMES[value] ?? value))
+    else if (key === '探す') shown.push(...value.split(' / ').filter((part) => /^(みつけた|のこり)/.test(part)))
+    else shown.push(key + ': ' + value)
+  }
+  return shown.join(' · ')
 }
 
 // state は、出し入れの状態(reduce)に、今の場面や表示用の値を重ねたもの。
@@ -610,7 +645,7 @@ function gameView(state, mode) {
     return {
       kind: 'windowGame',
       note: WINDOW_NOTE,
-      hud: state.hud ?? '',
+      hud: readableHud(state.hud),
       help: WINDOW_HELP,
       keys: HELP[state.scene] ?? [],
       buttons: [
@@ -625,7 +660,7 @@ function gameView(state, mode) {
     kind: 'game',
     image: imageCells(state.columns, state.rows, help.length + 1 + (state.isDebug ? 1 : 0)),
     help,
-    hud: state.hud ?? '',
+    hud: readableHud(state.hud),
     debug: state.isDebug
       ? '届いたキー: ' + JSON.stringify(state.lastKey ?? '') + ' · 押下中: ' + (state.keys ?? []).join(' ')
       : null,

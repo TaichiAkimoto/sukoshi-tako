@@ -156,6 +156,9 @@ async function goAway($) {
   if (!engine && isStarting) startToken += 1
   if (!engine) return
   await writeInput($)
+  // ウィンドウ方式: ゲームは自分のウィンドウで動き続ける。ペインを閉じても止めない
+  // (終わらせるのは、ゲームのウィンドウを閉じる・「やめる」・/tako:off)
+  if (state.mode === 'window') return
   awayTimer?.cancel()
   awayTimer = $.clock.after(AWAY_STOP_MS, () => void stopEngine())
 }
@@ -342,6 +345,12 @@ async function runEngine($) {
     frame = null
     inputPath = null
     if (path) await $.process.run(removeFileArgv(path, platform)).catch(() => {})
+  }
+  // ウィンドウ方式で、ゲームのウィンドウを人が閉じた。失敗ではないので、ペインも静かに閉じる
+  if (state.mode === 'window' && !failure) {
+    scene = 'starting'
+    await $.ui.close({ id: PANE }).catch(() => {})
+    return
   }
   // 遊んでいる最中に終わったなら、エンジンが落ちたか自分で終了した
   if (isPlayingPhase(state.phase)) {

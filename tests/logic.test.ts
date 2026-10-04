@@ -31,6 +31,7 @@ import {
   parseEngineManifest,
   platformKey,
   playMode,
+  readableHud,
   pushEvent,
   reduce,
   releasedPointer,
@@ -1100,6 +1101,32 @@ describe('fetchPlan on Windows refuses a root cmd would reinterpret', () => {
 
   test('the same characters are harmless without a shell (macOS, Linux)', () => {
     expect(fetchPlan({ platform: 'darwin', root: '/p/tako&calc', url: 'https://example.invalid/a.tar.gz' })).not.toBe(null)
+  })
+})
+
+// 本体が送る状態の行(key=value; …)は内部向けの書き方。人が読める形に直して出す。
+describe('readableHud', () => {
+  test('hide: the pose by its name, the two switches, no colour code and no button title', () => {
+    expect(readableHud('色=#808080; ポーズ=idle; 色を拾う=オフ; うつす=オフ; 確定=ここに隠れる')).toBe(
+      'ポーズ: 立ち · 色を拾う: オフ · うつす: オフ',
+    )
+    expect(readableHud('色=#ff0000; ポーズ=crouch; 色を拾う=オン; うつす=オフ; 確定=ここに隠れる')).toBe(
+      'ポーズ: しゃがみ · 色を拾う: オン · うつす: オフ',
+    )
+  })
+
+  test('a pose it does not know is shown as it came', () => {
+    expect(readableHud('ポーズ=handstand')).toBe('ポーズ: handstand')
+  })
+
+  test('seek: the two counts, without the button titles', () => {
+    expect(readableHud('探す=みつけた 0 / のこり 2 / さがし終わり / 背後 / 中')).toBe('みつけた 0 · のこり 2')
+  })
+
+  test('nothing, or a line in another form, is passed through', () => {
+    expect(readableHud('')).toBe('')
+    expect(readableHud(undefined)).toBe('')
+    expect(readableHud('そのままの文')).toBe('そのままの文')
   })
 })
 

@@ -1,7 +1,7 @@
 {
   "name": "tako",
   "displayName": "すこしタコ",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Claude が作業している間の待ち時間に「すこしタコ」が遊べます",
   "author": { "name": "TaichiAkimoto", "url": "https://github.com/TaichiAkimoto" },
   "homepage": "https://github.com/TaichiAkimoto/sukoshi-tako",

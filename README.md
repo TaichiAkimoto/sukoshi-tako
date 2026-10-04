@@ -1,10 +1,10 @@
 # sukoshi-tako(すこしタコ)
 
-Claude が作業している間の待ち時間に「すこしタコ」が遊べる Claude Code プラグインです。Mac の Claude Code なら、ターミナルでもデスクトップアプリでも使えます。Claude があなたを必要としたら、ゲームは止まります。
+Claude が作業している間の待ち時間に「すこしタコ」が遊べる Claude Code プラグインです。Mac の Claude Code なら、ターミナルでもデスクトップアプリでも使えます。Claude の作業が終わると、ゲームの画面の上に知らせが出ます。
 
 「すこしタコ」は、体を塗って景色に溶け込む 3D のかくれんぼです。このプラグインでは全世界モードが遊べます。世界のどこかの誰かが隠れた場所を探しに行くか、自分が隠れて誰かに探してもらいます。相手と同じ時間に遊ぶ必要はありません。
 
-A Claude Code plugin that lets you play "Sukoshi Tako", a 3D camouflage hide-and-seek, while Claude works: in a window of its own, or inside the terminal where the terminal can show pictures. It pauses when Claude needs you. macOS only for now.
+A Claude Code plugin that lets you play "Sukoshi Tako", a 3D camouflage hide-and-seek, while Claude works: in a window of its own, or inside the terminal where the terminal can show pictures. It tells you when Claude is done. macOS only for now.
 
 ## 入れ方
 
@@ -41,8 +41,9 @@ Windows と Linux でも遊べるようにする準備をしています。ま�
 ## 動き方
 
 - `/tako:play` を打つと、メニューが出ます。コースを選ぶと、ゲームのウィンドウが開きます。
-- Claude の作業が終わったり、権限の確認や質問が出たりすると、ゲームは止まります(「Claude が呼んでいます」と出ます)。次に Claude が作業を始めると、続きから動きます。
-- 「やめる」を押すと、ゲームのウィンドウも閉じます。
+- 操作のしかたは、ゲームのウィンドウの左下に出ます。
+- Claude の作業が終わったり、権限の確認や質問が出たりすると、ゲームのウィンドウの上に「Claude の作業が終わりました」と出ます。ゲームは止まりません(いくつものセッションを同時に動かしていても遊び続けられます)。
+- ゲームのウィンドウを閉じるか、「やめる」を押すと終わります。
 
 絵をターミナルの中に出せるターミナルでは、次のように動きます。
 
