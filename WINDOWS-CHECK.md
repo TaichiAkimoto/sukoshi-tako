@@ -52,6 +52,32 @@
    - ペインは開きましたか。ボタンは押せましたか。
    - 使ったのはどのターミナルですか(Windows Terminal、PowerShell、VS Code のターミナル、Claude デスクトップアプリ など)。
 
+## Claude デスクトップアプリをお使いの場合(こちらもお願いします)
+
+いちばん知りたいのは、Claude デスクトップアプリの「Code」タブから使ったときに動くかどうかです。デスクトップアプリをお使いなら、上の手順のあとに、次も 1 回お願いします。
+
+1. 先に、上の手順 5 でできた `tako-check-report.txt` の名前を `tako-check-report-terminal.txt` に変えます(次の結果で上書きされるため)。
+
+2. ターミナルで次の 2 行を実行して、確認用プラグインを入れます。
+
+   ```
+   claude plugin marketplace add TaichiAkimoto/sukoshi-tako
+   claude plugin install tako-check@sukoshi-tako
+   ```
+
+3. Claude デスクトップアプリを開き直して、「Code」タブで新しいセッションを始めます。セッションの種類は「Local」を選んでください(Cloud、SSH、WSL では調べられません)。
+
+4. 入力欄に `/tako` と打つと、候補に `tako-check:tako-check` が出ます。それを選んで送ります(デスクトップアプリでは、この長い名前になります)。横にペインが開いたら、ボタンを 1 回押します。
+
+5. ホームフォルダにできた `tako-check-report.txt` を送ってください。候補に出てこない場合や、送っても何も起きない場合は、そのことをそのまま教えてください。それも結果として役に立ちます。
+
+終わったら、次の 2 行で確認用プラグインを外せます。
+
+```
+claude plugin uninstall tako-check
+claude plugin marketplace remove sukoshi-tako
+```
+
 送り終わったら、`tako-check-report.txt` と、手順 1 で作った `sukoshi-tako` フォルダは消して構いません。
 
 ## 結果に入るもの

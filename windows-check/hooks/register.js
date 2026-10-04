@@ -127,17 +127,22 @@ export function register(on) {
     return next(e)
   })
 
-  on('command.run', { command: 'tako-check' }, async ($) => {
-    await runChecks($)
-    return {
-      text: [
-        'すこしタコ 動作確認の結果',
-        ...report,
-        reportPath ? '保存先: ' + tidy(reportPath) : '保存先: なし',
-        'ペインが出ていたら、ボタンを押してください。',
-      ].join('\n'),
-    }
-  })
+  // The short name is registered at run time (terminal). The desktop app lists only commands a
+  // plugin declares as files, so commands/tako-check.md declares it too; that one is named
+  // <plugin>:<command>, and this hook answers it before it reaches the model.
+  for (const name of ['tako-check', 'tako-check:tako-check']) {
+    on('command.run', { command: name }, async ($) => {
+      await runChecks($)
+      return {
+        text: [
+          'すこしタコ 動作確認の結果',
+          ...report,
+          reportPath ? '保存先: ' + tidy(reportPath) : '保存先: なし',
+          'ペインが出ていたら、ボタンを押してください。',
+        ].join('\n'),
+      }
+    })
+  }
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== PANE) return next(e)

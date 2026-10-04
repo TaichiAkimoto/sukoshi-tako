@@ -1,7 +1,7 @@
 {
   "name": "tako-check",
   "displayName": "すこしタコ 動作確認",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "すこしタコを Windows / Linux に対応させるための動作確認(/tako-check)。ゲームは入っていません",
   "author": { "name": "TaichiAkimoto", "url": "https://github.com/TaichiAkimoto" },
   "homepage": "https://github.com/TaichiAkimoto/sukoshi-tako",
