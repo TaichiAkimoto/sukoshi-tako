@@ -1,6 +1,17 @@
 {
   "name": "sukoshi-tako",
   "description": "Claude の作業中にすこしタコを遊ぶ",
-  "owner": { "name": "TaichiAkimoto" },
-  "plugins": [{ "name": "sukoshi-tako", "source": "./" }]
+  "owner": {
+    "name": "TaichiAkimoto"
+  },
+  "plugins": [
+    {
+      "name": "sukoshi-tako",
+      "source": "./"
+    },
+    {
+      "name": "tako-check",
+      "source": "./windows-check"
+    }
+  ]
 }

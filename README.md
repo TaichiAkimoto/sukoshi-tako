@@ -24,6 +24,10 @@ A Claude Code plugin that lets you play "Sukoshi Tako", a 3D camouflage hide-and
 
 オフにするには `/tako off` です。
 
+## Windows / Linux 対応の準備
+
+Windows と Linux でも遊べるようにする準備をしています。まだゲームは動きません。Windows か Linux で Claude Code を使っていて、動作確認(2〜3 分、ゲームなし)を手伝ってくださる方は [WINDOWS-CHECK.md](WINDOWS-CHECK.md) を見てください。
+
 ## 必要なもの
 
 - macOS(ゲーム本体は Apple silicon と Intel の両方に対応。動作を確かめたのは macOS 27 の Apple silicon だけです)
