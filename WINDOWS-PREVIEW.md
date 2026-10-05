@@ -1,8 +1,6 @@
 # Windows / Linux の先行版を試す
 
-「すこしタコ」を Windows と Linux の Claude Code でも遊べるようにしました。まだ人の手で確かめた回数が少ないので、**先行版**として別の名前(`tako-preview`)で置いています。試してもらえると助かります。10 分ほどです。
-
-Mac の方は、今までどおり [README](README.md) の入れ方(`tako`)を使ってください。
+「すこしタコ」を Windows と Linux の Claude Code でも遊べるようにしました。まだ人の手で確かめた回数が少ないので、試して結果を教えてもらえると助かります。10 分ほどです。入れる物は Mac と同じ `tako` です。
 
 ## 必要なもの
 
@@ -15,16 +13,16 @@ PowerShell(Linux ならターミナル)を開いて、次の 2 行を 1 行ず�
 
 ```
 claude plugin marketplace add TaichiAkimoto/sukoshi-tako
-claude plugin install tako-preview@sukoshi-tako
+claude plugin install tako@sukoshi-tako
 ```
 
 すでに 1 行目を済ませている場合は、先に `claude plugin marketplace update sukoshi-tako` を実行してください(新しい一覧を取り直します)。入れたあと、Claude Code(デスクトップアプリなら、アプリ)を開き直してください。
 
 ## 遊び方
 
-**ターミナルの Claude Code**: `/tako-preview:play` と打って送ります。
+**ターミナルの Claude Code**: `/tako:play` と打って送ります。
 
-**Claude デスクトップアプリ**: 「Code」タブで新しいセッションを作ります。セッションの種類は「Local」を選んでください。入力欄に `/tako` と打つと候補に `tako-preview:play` が出るので、それを選んで送ります。
+**Claude デスクトップアプリ**: 「Code」タブで新しいセッションを作ります。セッションの種類は「Local」を選んでください。入力欄に `/tako` と打つと候補に `tako:play` が出るので、それを選んで送ります。
 
 送ると、次のことが起きます。
 
@@ -34,7 +32,7 @@ claude plugin install tako-preview@sukoshi-tako
 
 Windows では、初回に「発行元が不明なプログラム」という警告が出るかもしれません。出た場合は、その文面を教えてください。許可するかどうかはお任せします。
 
-やめるときは、ゲームのウィンドウを閉じるか、`/tako-preview:off` を送ります。
+やめるときは、ゲームのウィンドウを閉じるか、`/tako:off` を送ります。
 
 ## 操作
 
@@ -63,7 +61,7 @@ Linux の方へ: ウィンドウの表示に X11 が要ります(Wayland だけ�
 次の 2 行で外せます。
 
 ```
-claude plugin uninstall tako-preview
+claude plugin uninstall tako
 claude plugin marketplace remove sukoshi-tako
 ```
 

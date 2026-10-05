@@ -2,14 +2,14 @@
 // 作業が終わるか、Claude があなたを必要としたら、すぐに戻す。
 
 import {
+  classifyEngineEnd,
   commandAction,
   commandNames,
-  engineSize,
+  devEngineRequest,
   DROP_IN_DELAY_MS,
   canShowPixels,
   checksumMatches,
-  engineEntryFor,
-  enginePathFor,
+  engineEndAction,
   fetchPlan,
   idlePointer,
   initialState,
@@ -17,11 +17,11 @@ import {
   inputPathFor,
   isStartStillWanted,
   isPlayingPhase,
+  launchRequest,
   NEEDS_TERMINAL,
   newEngineSession,
   PANE_HEIGHT,
   PANE_WIDTH,
-  packPathFor,
   paneOpenArgs,
   removeFileArgv,
   paneView,
@@ -32,7 +32,9 @@ import {
   pushEvent,
   reduce,
   releasedPointer,
+  resolveEngineAsset,
   resolveEngineOverride,
+  devMarkerPath,
   splitLines,
   surfaceOrGuess,
   unavailableText,
@@ -66,6 +68,10 @@ let sceneDetail = ''
 let stages = []
 let hud = ''
 let failure = null
+// failure の種類。'noBuild' = この OS の本体がまだ無い(ウィンドウの話をしない)
+let failureKind = null
+// プラグインが本体を止めた(Windows では、止めた子も終了コードで返るので、自分の記録で見分ける)
+let stopRequested = false
 // ペインから受けた入力と、メニューで押した単発の操作
 let keys = []
 let pointer = idlePointer()
@@ -168,7 +174,10 @@ async function stopEngine() {
   awayTimer = null
   startToken += 1
   // ループを抜けると子プロセスが止まる
-  if (engine) await engine.return()
+  if (engine) {
+    stopRequested = true
+    await engine.return()
+  }
 }
 
 async function checkPixels($) {
@@ -224,13 +233,14 @@ async function downloadEngine($) {
   }
   const platform = await platformFor($)
   const assets = parseEngineAssets(await $.fs.read(root + '/engine.json').catch(() => ''))
-  if (!assets) throw new Error('engine.json が読めません。')
-  const asset = assets[platform]
-  if (!asset) throw new Error('この環境では遊べません。')
+  // この OS の本体が engine.json にまだ無いときも、落ちずに理由の分かる案内を出す
+  const found = resolveEngineAsset(assets, platform)
+  if (!found.ok) throw Object.assign(new Error(found.text), { failureKind: found.kind })
+  const asset = found.asset
   // 取得元の上書きは開発用。どこから取っても、下の照合を通らなければ実行しない
   const url = (await $.env.get('SUKOSHI_TAKO_ENGINE_URL')) ?? asset.url
   const plan = fetchPlan({ platform, root, url })
-  if (!plan) throw new Error('この環境では遊べません。')
+  if (!plan) throw new Error('このフォルダの場所では、ゲーム本体を取得できません。')
   // 展開済みで、engine.json と同じものなら取り直さない
   if ((await $.fs.exists(plan.engineDir)) && (await $.fs.exists(plan.marker))) {
     if ((await $.fs.read(plan.marker)).trim() === asset.sha256) return { platform, asset, plan }
@@ -261,34 +271,33 @@ async function downloadEngine($) {
 async function engineRequest($, id) {
   const root = $.plugin.root
   const mode = state.mode === 'window' ? 'window' : 'pane'
+  const platform = await platformFor($)
   const override = resolveEngineOverride(
     await $.env.get('SUKOSHI_TAKO_ENGINE'),
     await $.env.get('SUKOSHI_TAKO_DEV'),
+    platform,
+    // 印のファイルが、このプラグインのフォルダの中にあるときだけ(環境変数だけでは効かせない)
+    await $.fs.exists(devMarkerPath(root)).catch(() => false),
   )
-  const size = engineSize(mode)
-  const env = {
-    // macOS の共有メモリ名は 30 文字まで: "/tk" + 4 文字 + "-" + 連番
-    SUKOSHI_TAKO_FRAMES: '/tk' + id + '-',
-    SUKOSHI_TAKO_INPUT: inputPath,
-    SUKOSHI_TAKO_WIDTH: String(size.width),
-    SUKOSHI_TAKO_HEIGHT: String(size.height),
-    SUKOSHI_TAKO_MODE: mode,
-  }
-  if (override === 'fake') {
-    return { argv: ['python3', '-u', root + '/dev/fake_engine.py'], env }
-  }
   if (override) {
-    if (!(await $.fs.exists(override))) throw new Error('SUKOSHI_TAKO_ENGINE の先にファイルがありません。')
-    // 手元のビルドは、隣のフレームワークを自分では見つけられない
-    const folder = override.slice(0, override.lastIndexOf('/'))
-    return { argv: [override], env: { ...env, DYLD_FRAMEWORK_PATH: folder + ':' + folder + '/PackageFrameworks' } }
+    if (override !== 'fake' && !(await $.fs.exists(override))) {
+      throw new Error('SUKOSHI_TAKO_ENGINE の先にファイルがありません。')
+    }
+    return devEngineRequest({ override, platform, mode, root, id, inputPath })
   }
   // 本体は、取得のときに照合した配布物だけを起動する。素材のパックは展開先で渡す
-  const { platform, asset, plan } = await ensureEngine($)
-  return {
-    argv: [enginePathFor(root, platform, engineEntryFor(asset, mode))],
-    env: { ...env, SUKOSHI_TAKO_PACK: packPathFor(plan.engineDir, platform) },
-  }
+  const ensured = await ensureEngine($)
+  const request = launchRequest({
+    platform: ensured.platform,
+    mode,
+    root,
+    asset: ensured.asset,
+    engineDir: ensured.plan.engineDir,
+    id,
+    inputPath,
+  })
+  if (!request) throw new Error('ゲーム本体の場所が分かりません。')
+  return request
 }
 
 async function runEngine($) {
@@ -305,6 +314,7 @@ async function runEngine($) {
     if (!inputPath) throw new Error('一時フォルダの場所が分かりません。')
     scene = 'starting'
     failure = null
+    failureKind = null
     // 前のエンジンの時代に溜まった単発操作・キー・ボタンは、新しいエンジンに渡さない
     ;({ keys, pointer, events } = newEngineSession())
     request = await engineRequest($, id)
@@ -312,6 +322,7 @@ async function runEngine($) {
     inputPath = null
     scene = 'error'
     failure = error.message
+    failureKind = error.failureKind ?? null
     downloadStatus = null
     $.ui.invalidate('ui.render')
     return
@@ -326,10 +337,19 @@ async function runEngine($) {
     return
   }
   await writeInput($)
+  stopRequested = false
   engine = $.process.spawn(request)
   let pending = ''
+  // 終わり方({ code, signal })。止められたときは無い
+  let result
   try {
-    for await (const { stream, text } of engine) {
+    for (;;) {
+      const step = await engine.next()
+      if (step.done) {
+        result = step.value
+        break
+      }
+      const { stream, text } = step.value
       if (stream !== 'stdout') continue
       const split = splitLines(pending, text)
       pending = split.pending
@@ -339,21 +359,27 @@ async function runEngine($) {
     $.ui.log('すこしタコを起動できませんでした: ' + error, { to: 'debug' })
     failure = 'ゲームを起動できませんでした。'
   } finally {
+    // 流し読みが途中で失敗しても、子を残さない(for await なら自動で呼ばれる後始末を、手動のループでも行う)
+    await engine?.return?.().catch(() => {})
     // 入力ファイルを /tmp に残さない
     const path = inputPath
     engine = null
     frame = null
     inputPath = null
-    if (path) await $.process.run(removeFileArgv(path, platform)).catch(() => {})
+    const removal = path ? removeFileArgv(path, platform) : null
+    if (removal) await $.process.run(removal).catch(() => {})
   }
-  // ウィンドウ方式で、ゲームのウィンドウを人が閉じた。失敗ではないので、ペインも静かに閉じる
-  if (state.mode === 'window' && !failure) {
+  // 人が閉じた・プラグインが止めた・落ちた、の見分け(Windows では止めた子も終了コードで返る)。
+  // 画面の扱いは Mac と同じで、OS によらない。見分けの結果は診断のログにだけ残す
+  const kind = classifyEngineEnd({ result, stopRequested, hasFatal: failureKind === 'fatal' })
+  $.ui.log('すこしタコの本体が終わりました: ' + kind + ' ' + JSON.stringify(result ?? null), { to: 'debug' })
+  const action = engineEndAction({ mode: state.mode, hasFailure: Boolean(failure), isPlaying: isPlayingPhase(state.phase) })
+  if (action === 'closePane') {
+    // ウィンドウ方式で、ゲームのウィンドウを人が閉じた。失敗ではないので、ペインも静かに閉じる
     scene = 'starting'
     await $.ui.close({ id: PANE }).catch(() => {})
-    return
-  }
-  // 遊んでいる最中に終わったなら、エンジンが落ちたか自分で終了した
-  if (isPlayingPhase(state.phase)) {
+  } else if (action === 'markEnded') {
+    // 遊んでいる最中に終わったなら、エンジンが落ちたか自分で終了した
     scene = 'error'
     failure = failure ?? 'ゲームが終了しました。'
     $.ui.invalidate('ui.render')
@@ -398,6 +424,7 @@ function handleEngineLine($, message) {
     case 'fatal':
       scene = 'error'
       failure = message.reason
+      failureKind = 'fatal'
       $.ui.invalidate('ui.render')
       break
   }
@@ -567,6 +594,7 @@ async function drawPane($, e) {
       stages,
       menuMode,
       failure,
+      failureKind,
       downloadStatus,
       isDebug,
       keys,

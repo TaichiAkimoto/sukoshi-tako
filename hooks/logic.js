@@ -241,8 +241,15 @@ export function inputPathFor(tmpdir, id, platform) {
 }
 
 // 開発用の SUKOSHI_TAKO_ENGINE。SHA-256 の照合を通らずに任意の実行ファイルを起動できてしまうので、
-// SUKOSHI_TAKO_DEV=1 の明示的な許可があり、かつ絶対パス(または fake)のときだけ受け付ける。
-export function resolveEngineOverride(override, devFlag, platform) {
+// (1) プラグインのフォルダの中に印のファイルがあり、(2) SUKOSHI_TAKO_DEV=1 で、(3) 絶対パス(または fake)の
+// ときだけ受け付ける。環境変数だけでは効かない: 環境変数は、開いたリポジトリの設定から入りうるため。
+// 印のファイルは、開発する人が自分のプラグインのフォルダに置く(配る物には入っていない)。
+export function devMarkerPath(root) {
+  return root + '/dev/allow-local-engine'
+}
+
+export function resolveEngineOverride(override, devFlag, platform, hasDevMarker) {
+  if (hasDevMarker !== true) return null
   if (devFlag !== '1' || typeof override !== 'string') return null
   if (override === 'fake') return 'fake'
   return isAbsolutePath(override, platform) ? override : null
@@ -274,6 +281,8 @@ export function splitLines(pending, text) {
 }
 
 export function parseEngineLine(line) {
+  // Windows の標準出力は \r\n で届くことがある。行末の \r が語に残ると、場面が「知らない語」になる
+  line = line.replace(/\r$/, '')
   if (!line.startsWith('@')) return null
   const space = line.indexOf(' ')
   const tag = space === -1 ? line : line.slice(0, space)
@@ -393,8 +402,10 @@ export function fetchPlan({ platform, root, url }) {
   if (platform === 'win32-x64') {
     // del / rmdir / mkdir は cmd /c 経由(= シェル)。cmd が読み替える文字が場所にあるなら取りに行かない
     if (/[&|<>^%"!()]/.test(root)) return null
-    const archive = root + '\\engine.tar.gz'
-    const distDir = root + '\\dist'
+    // cmd は / をオプションの印と読むので、区切りは \ にそろえる。末尾の区切りは落とす
+    const base = windowsRoot(root)
+    const archive = base + '\\engine.tar.gz'
+    const distDir = base + '\\dist'
     const engineDir = distDir + '\\sukoshi-tako-engine'
     return {
       archive,
@@ -412,9 +423,17 @@ export function fetchPlan({ platform, root, url }) {
   return null
 }
 
+// Windows のパスの区切りを \ にそろえ、末尾の区切りを落とす
+function windowsRoot(root) {
+  return root.replace(/\//g, '\\').replace(/\\+$/, '')
+}
+
 // 入力ファイルの後始末。Windows に rm は無い
+// cmd の特殊文字が場所に入っていたら、cmd に渡さない(取得の fetchPlan と同じ検査)。そのときは null(後始末を諦める)。
 export function removeFileArgv(path, platform) {
-  return platform === 'win32-x64' ? ['cmd', '/c', 'del', '/f', '/q', path] : ['rm', '-f', path]
+  if (platform !== 'win32-x64') return ['rm', '-f', path]
+  if (/[&|<>^%"!()]/.test(path)) return null
+  return ['cmd', '/c', 'del', '/f', '/q', path.replace(/\//g, '\\')]
 }
 
 // 取得や起動の準備を始めたときの番号と、今の番号。オフにしたりペインを閉じたりすると番号が進む。
@@ -426,7 +445,7 @@ export function isStartStillWanted(tokenAtStart, tokenNow) {
 // 配布物の中の実行ファイルの場所
 export function enginePathFor(root, platform, entry) {
   if (platform === 'darwin' || platform === 'linux-x64') return root + '/dist/' + entry
-  if (platform === 'win32-x64') return root + '\\dist\\' + entry.replace(/\//g, '\\')
+  if (platform === 'win32-x64') return windowsRoot(root) + '\\dist\\' + entry.replace(/\//g, '\\')
   return null
 }
 
@@ -442,6 +461,73 @@ export function packPathFor(engineDir, platform) {
   if (typeof engineDir !== 'string' || engineDir === '') return null
   const separator = platform === 'win32-x64' ? '\\' : '/'
   return engineDir.replace(/[\\/]+$/, '') + separator + 'assets.pack'
+}
+
+// engine.json の配布物の一覧(parseEngineAssets の戻り値)から、この OS の分を選ぶ。
+// ない OS は、落ちずに理由の分かる案内にする。kind: noBuild = この OS の本体がまだ無い /
+// unsupported = 対応していない OS・CPU / manifest = engine.json が読めない
+export function resolveEngineAsset(assets, platform) {
+  if (!assets) return { ok: false, kind: 'manifest', text: 'engine.json が読めません。' }
+  if (platform !== 'darwin' && platform !== 'win32-x64' && platform !== 'linux-x64') {
+    return { ok: false, kind: 'unsupported', text: NEEDS_OTHER_ENV }
+  }
+  const asset = assets[platform]
+  if (!asset) return { ok: false, kind: 'noBuild', text: noBuildText(platform) }
+  return { ok: true, asset }
+}
+
+// 本体に渡す環境変数。共有メモリの名前(FRAMES)は Mac の本体だけが使う
+export function engineEnv({ platform, mode, id, inputPath, packPath }) {
+  const size = engineSize(mode)
+  return {
+    // macOS の共有メモリ名は 30 文字まで: "/tk" + 4 文字 + "-" + 連番
+    ...(platform === 'darwin' ? { SUKOSHI_TAKO_FRAMES: '/tk' + id + '-' } : {}),
+    SUKOSHI_TAKO_INPUT: inputPath,
+    SUKOSHI_TAKO_WIDTH: String(size.width),
+    SUKOSHI_TAKO_HEIGHT: String(size.height),
+    SUKOSHI_TAKO_MODE: mode,
+    ...(packPath ? { SUKOSHI_TAKO_PACK: packPath } : {}),
+  }
+}
+
+// 取得・照合・展開が済んだ本体の起動の組み立て。置き場所が分からなければ null
+export function launchRequest({ platform, mode, root, asset, engineDir, id, inputPath }) {
+  const exe = enginePathFor(root, platform, engineEntryFor(asset, mode))
+  if (!exe) return null
+  return { argv: [exe], env: engineEnv({ platform, mode, id, inputPath, packPath: packPathFor(engineDir, platform) }) }
+}
+
+// 開発用の上書き(SUKOSHI_TAKO_ENGINE。resolveEngineOverride を通った値)の起動の組み立て
+export function devEngineRequest({ override, platform, mode, root, id, inputPath }) {
+  const env = engineEnv({ platform, mode, id, inputPath, packPath: null })
+  if (override === 'fake') return { argv: ['python3', '-u', root + '/dev/fake_engine.py'], env }
+  if (!override) return null
+  if (platform !== 'darwin') return { argv: [override], env }
+  // 手元の Mac のビルドは、隣のフレームワークを自分では見つけられない
+  const folder = override.slice(0, override.lastIndexOf('/'))
+  return { argv: [override], env: { ...env, DYLD_FRAMEWORK_PATH: folder + ':' + folder + '/PackageFrameworks' } }
+}
+
+// 本体が終わったときの解釈。Windows では、止めた子も signal ではなく終了コードで返るので、
+// コードだけでは見分けられない。止めたかどうかは自分の記録(stopRequested)で決める。
+//   fatal    @fatal を受けた(理由は画面に出ている)
+//   stopped  プラグインが止めた(オフ・やめる・5 分離れた)
+//   closed   止めていないのに正常に終わった(人がウィンドウを閉じた。入力ファイルが消えた場合も)
+//   crashed  止めていないのに 0 以外の終了・signal・結果なし
+export function classifyEngineEnd({ result, stopRequested, hasFatal }) {
+  if (hasFatal) return 'fatal'
+  if (stopRequested) return 'stopped'
+  if (result && result.code === 0 && !result.signal) return 'closed'
+  return 'crashed'
+}
+
+// 終わったあとにペインをどうするか(Mac で今やっていることそのまま。OS に依らない)。
+//   closePane   ウィンドウ方式で失敗が無い: 静かにペインも閉じる
+//   markEnded   遊んでいる最中に終わった: 「ゲームが終了しました」を出す
+//   none        何もしない
+export function engineEndAction({ mode, hasFailure, isPlaying }) {
+  if (mode === 'window' && !hasFailure) return 'closePane'
+  return isPlaying ? 'markEnded' : 'none'
 }
 
 // ---- メニュー ----
@@ -497,8 +583,9 @@ export function platformKey({ envOS, unameS, unameM, processorArchitecture }) {
 //   pane    ターミナルのペインの中に絵を出す(今までの Mac)
 //   window  ゲーム本体が別ウィンドウを出す
 //   none    遊べない(案内だけ出す)
-// いま遊べるのは Mac だけ。Windows / Linux は、その配布物と取得を足すときに
-// 'window' へ広げる(それまでは none のまま、確かめていない場所を遊べると言わない)。
+// Windows / Linux の新しい本体は絵をペインに出さない(ウィンドウ方式だけ)ので、ターミナルでも
+// デスクトップでも 'window'。画素が出るかどうかは Mac のターミナルの話で、答えに効かない。
+// 実際に動くかは、その OS の配布物が engine.json にあるかで決まる(無ければ取得の段で案内する)。
 // どの表示先で描いているかがまだ分からないとき(起動直後、コマンドの時点)の読み。
 // 絵が出せるターミナルなら、今までどおりターミナルとして扱う。それ以外は分からないまま返し、
 // ペインを描くときに決める。
@@ -508,6 +595,9 @@ export function surfaceOrGuess(surface, hasPixels) {
 }
 
 export function playMode({ surface, hasPixels, platform }) {
+  if (platform === 'win32-x64' || platform === 'linux-x64') {
+    return surface === 'terminal' || surface === 'desktop' ? 'window' : 'none'
+  }
   if (platform !== 'darwin') return 'none'
   // ターミナル: 絵を出せる(Ghostty、kitty)ならペインの中、出せないなら別ウィンドウ
   if (surface === 'terminal') return hasPixels === true ? 'pane' : 'window'
@@ -521,7 +611,12 @@ export function playMode({ surface, hasPixels, platform }) {
 // 判定は全部ここに置いて、テストで固定できるようにする。
 
 export const NEEDS_TERMINAL = 'すこしタコは、Mac のターミナルか Claude デスクトップアプリの Claude Code で遊べます。'
-export const NEEDS_MAC = 'いまは macOS だけで遊べます。'
+// Windows / Linux で、ターミナルでもデスクトップアプリでもない場所(スマホ、エディタの中など)
+export const NEEDS_LOCAL_SESSION =
+  'すこしタコは、ターミナルか Claude デスクトップアプリの Claude Code(Local のセッション)から開いてください。'
+// 対応していない OS・CPU
+export const NEEDS_OTHER_ENV =
+  'お使いのパソコンの種類には、まだ対応していません。いまのところ、Mac のほか、Windows と Linux(どちらも 64 ビット)向けに準備しています。'
 // ウィンドウ方式のペインに出す案内
 export const WINDOW_NOTE = 'ゲームは別のウィンドウに出ています。'
 export const WINDOW_HELP = 'キーとマウスは、ゲームのウィンドウで操作します。ウィンドウを閉じると終わります。'
@@ -529,8 +624,27 @@ export const WINDOW_HELP = 'キーとマウスは、ゲームのウィンドウ�
 export const WINDOW_UNAVAILABLE =
   'ゲームのウィンドウを開けませんでした。この Mac の上で動いている Claude Code から開いてください(Claude デスクトップアプリでは Local のセッション)。'
 
+export const WINDOW_UNAVAILABLE_WINDOWS =
+  'ゲームのウィンドウを開けませんでした。このセッションの種類では遊べません。Local のセッションで開いてください(Claude デスクトップアプリでは、新しいセッションを Local で作ります)。'
+export const WINDOW_UNAVAILABLE_LINUX =
+  'ゲームのウィンドウを開けませんでした。このセッションの種類では遊べません。Local のセッションで開いてください。Linux では、X11 という画面の仕組みが動いている環境が必要です。'
+
+export function windowUnavailableText(platform) {
+  if (platform === 'win32-x64') return WINDOW_UNAVAILABLE_WINDOWS
+  if (platform === 'linux-x64') return WINDOW_UNAVAILABLE_LINUX
+  return WINDOW_UNAVAILABLE
+}
+
 export function unavailableText(platform) {
-  return platform === 'darwin' ? NEEDS_TERMINAL : NEEDS_MAC
+  if (platform === 'darwin') return NEEDS_TERMINAL
+  if (platform === 'win32-x64' || platform === 'linux-x64') return NEEDS_LOCAL_SESSION
+  return NEEDS_OTHER_ENV
+}
+
+// この OS 向けのゲーム本体が engine.json にまだ無いときの案内
+export function noBuildText(platform) {
+  const name = platform === 'win32-x64' ? 'Windows' : platform === 'linux-x64' ? 'Linux' : 'この OS'
+  return name + ' 向けのゲーム本体は、まだ公開していません。準備中です。'
 }
 
 // 絵のすぐ下に出す。1 行に詰めると狭いペインで折り返して絵から離れるので、短い行に分ける
@@ -609,9 +723,13 @@ export function paneView(state, mode) {
     default:
       return {
         kind: 'error',
-        text: state.failure ?? 'うまく動いていません。',
-        // ウィンドウ方式で開けなかったときは、Local のセッションで開くよう案内する
-        guidance: mode === 'window' ? WINDOW_UNAVAILABLE : null,
+        // 本体の @fatal や起動の失敗(failure)が先。なければ本体が @state error で伝えた文
+        text: state.failure ?? (state.scene === 'error' && state.sceneDetail ? state.sceneDetail : 'うまく動いていません。'),
+        // ウィンドウ方式で開けなかったときは、Local のセッションで開くよう案内する。
+        // その OS の本体がまだ無いだけのときは、ウィンドウの話はしない
+        // 本体が動いていて @state error で伝えた失敗(少し待ってね、保存できなかった、など)にも付けない
+        guidance:
+          mode === 'window' && state.failureKind !== 'noBuild' && state.failure ? windowUnavailableText(state.platform) : null,
         button: { key: 'retry', label: 'もう一度', hotkey: '1', autoFocus: true },
       }
   }

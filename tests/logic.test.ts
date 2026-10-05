@@ -19,7 +19,8 @@ import {
   inputPathFor,
   isAbsolutePath,
   isPlayingPhase,
-  NEEDS_MAC,
+  NEEDS_LOCAL_SESSION,
+  NEEDS_OTHER_ENV,
   NEEDS_TERMINAL,
   newEngineSession,
   PANE_HEIGHT,
@@ -36,6 +37,7 @@ import {
   reduce,
   releasedPointer,
   resolveEngineOverride,
+  devMarkerPath,
   rowsFor,
   splitLines,
   surfaceOrGuess,
@@ -44,6 +46,16 @@ import {
   WINDOW_HELP,
   WINDOW_NOTE,
   WINDOW_UNAVAILABLE,
+  WINDOW_UNAVAILABLE_LINUX,
+  WINDOW_UNAVAILABLE_WINDOWS,
+  classifyEngineEnd,
+  devEngineRequest,
+  engineEndAction,
+  engineEnv,
+  launchRequest,
+  noBuildText,
+  resolveEngineAsset,
+  windowUnavailableText,
 } from '../hooks/logic.js'
 
 type Action = Parameters<typeof reduce>[1]
@@ -335,12 +347,12 @@ describe('開発用のゲーム本体の指定', () => {
   })
 
   test('許可があれば、絶対パスと fake だけ受け付ける', () => {
-    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1')).toBe('/opt/dev/ChameleonPane')
-    expect(resolveEngineOverride('fake', '1')).toBe('fake')
-    expect(resolveEngineOverride('./evil', '1')).toBe(null)
-    expect(resolveEngineOverride('evil', '1')).toBe(null)
-    expect(resolveEngineOverride('', '1')).toBe(null)
-    expect(resolveEngineOverride(undefined, '1')).toBe(null)
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'darwin', true)).toBe('/opt/dev/ChameleonPane')
+    expect(resolveEngineOverride('fake', '1', 'darwin', true)).toBe('fake')
+    expect(resolveEngineOverride('./evil', '1', 'darwin', true)).toBe(null)
+    expect(resolveEngineOverride('evil', '1', 'darwin', true)).toBe(null)
+    expect(resolveEngineOverride('', '1', 'darwin', true)).toBe(null)
+    expect(resolveEngineOverride(undefined, '1', 'darwin', true)).toBe(null)
   })
 })
 
@@ -452,7 +464,8 @@ describe('OS の見分け', () => {
 
 describe('遊び方の判定', () => {
   // 表示先 4 種 × hasPixels 2 種 × platform 4 種の全 32 通りを固定する。
-  // いま遊べるのは Mac だけ(Windows / Linux は、その配布物と取得を足す段で 'window' に広げる)
+  // Windows / Linux は、ターミナルでもデスクトップでも本体のウィンドウ(新しい本体は絵をペインに出さない)。
+  // 画素が出るかどうかは Mac のターミナルの話で、Windows / Linux の答えには効かない
   const table: [string, boolean, string | null, 'pane' | 'window' | 'none'][] = [
     ['terminal', true, 'darwin', 'pane'],
     // 絵を出せないターミナル(Terminal.app、iTerm2 など)でも、別ウィンドウで遊べる
@@ -463,18 +476,18 @@ describe('遊び方の判定', () => {
     ['mobile', false, 'darwin', 'none'],
     ['vscode', true, 'darwin', 'none'],
     ['vscode', false, 'darwin', 'none'],
-    ['terminal', true, 'win32-x64', 'none'],
-    ['terminal', false, 'win32-x64', 'none'],
-    ['desktop', true, 'win32-x64', 'none'],
-    ['desktop', false, 'win32-x64', 'none'],
+    ['terminal', true, 'win32-x64', 'window'],
+    ['terminal', false, 'win32-x64', 'window'],
+    ['desktop', true, 'win32-x64', 'window'],
+    ['desktop', false, 'win32-x64', 'window'],
     ['mobile', true, 'win32-x64', 'none'],
     ['mobile', false, 'win32-x64', 'none'],
     ['vscode', true, 'win32-x64', 'none'],
     ['vscode', false, 'win32-x64', 'none'],
-    ['terminal', true, 'linux-x64', 'none'],
-    ['terminal', false, 'linux-x64', 'none'],
-    ['desktop', true, 'linux-x64', 'none'],
-    ['desktop', false, 'linux-x64', 'none'],
+    ['terminal', true, 'linux-x64', 'window'],
+    ['terminal', false, 'linux-x64', 'window'],
+    ['desktop', true, 'linux-x64', 'window'],
+    ['desktop', false, 'linux-x64', 'window'],
     ['mobile', true, 'linux-x64', 'none'],
     ['mobile', false, 'linux-x64', 'none'],
     ['vscode', true, 'linux-x64', 'none'],
@@ -619,8 +632,9 @@ describe('ペインに描くもの(paneView)', () => {
 
   test('遊べないときは、OS に合った案内文', () => {
     expect(paneView({ ...base, platform: 'darwin' }, 'none').text).toBe(NEEDS_TERMINAL)
-    expect(paneView({ ...base, platform: 'win32-x64' }, 'none').text).toBe(NEEDS_MAC)
-    expect(paneView({ ...base, platform: null }, 'none').text).toBe(NEEDS_MAC)
+    expect(paneView({ ...base, platform: 'win32-x64' }, 'none').text).toBe(NEEDS_LOCAL_SESSION)
+    expect(paneView({ ...base, platform: 'linux-x64' }, 'none').text).toBe(NEEDS_LOCAL_SESSION)
+    expect(paneView({ ...base, platform: null }, 'none').text).toBe(NEEDS_OTHER_ENV)
     expect(unavailableText('darwin')).toBe(NEEDS_TERMINAL)
   })
 
@@ -985,17 +999,17 @@ describe('入力ファイルの置き場所(Windows)', () => {
 
 describe('開発用のゲーム本体の指定(Windows)', () => {
   test('win32-x64 は C:\\ の形を受け付け、/ で始まるだけのものは受け付けない', () => {
-    expect(resolveEngineOverride('C:\\dev\\ChameleonPane.exe', '1', 'win32-x64')).toBe('C:\\dev\\ChameleonPane.exe')
-    expect(resolveEngineOverride('C:/dev/ChameleonPane.exe', '1', 'win32-x64')).toBe('C:/dev/ChameleonPane.exe')
-    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'win32-x64')).toBe(null)
-    expect(resolveEngineOverride('fake', '1', 'win32-x64')).toBe('fake')
+    expect(resolveEngineOverride('C:\\dev\\ChameleonPane.exe', '1', 'win32-x64', true)).toBe('C:\\dev\\ChameleonPane.exe')
+    expect(resolveEngineOverride('C:/dev/ChameleonPane.exe', '1', 'win32-x64', true)).toBe('C:/dev/ChameleonPane.exe')
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'win32-x64', true)).toBe(null)
+    expect(resolveEngineOverride('fake', '1', 'win32-x64', true)).toBe('fake')
     expect(resolveEngineOverride('C:\\dev\\ChameleonPane.exe', undefined, 'win32-x64')).toBe(null)
   })
 
   test('darwin / linux-x64 / 省略は今までどおり', () => {
-    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'darwin')).toBe('/opt/dev/ChameleonPane')
-    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'linux-x64')).toBe('/opt/dev/ChameleonPane')
-    expect(resolveEngineOverride('./evil', '1', 'linux-x64')).toBe(null)
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'darwin', true)).toBe('/opt/dev/ChameleonPane')
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'linux-x64', true)).toBe('/opt/dev/ChameleonPane')
+    expect(resolveEngineOverride('./evil', '1', 'linux-x64', true)).toBe(null)
   })
 })
 
@@ -1184,5 +1198,524 @@ describe('surfaceOrGuess', () => {
   test('unknown and no pixels: still unknown, to be decided when the pane is drawn', () => {
     expect(surfaceOrGuess(null, false)).toBe(null)
     expect(surfaceOrGuess(null, null)).toBe(null)
+  })
+})
+
+// ---- Step B5: Windows / Linux ----
+
+describe('Windows / Linux の遊び方(表示先が未定のときも含む)', () => {
+  test('Windows / Linux は、画素が出るかどうかに関わらず、ターミナルもデスクトップも window', () => {
+    for (const platform of ['win32-x64', 'linux-x64']) {
+      for (const surface of ['terminal', 'desktop']) {
+        for (const hasPixels of [true, false, null]) {
+          expect(playMode({ surface, hasPixels, platform })).toBe('window')
+        }
+      }
+      for (const surface of ['mobile', 'vscode', null, undefined]) {
+        expect(playMode({ surface, hasPixels: true, platform })).toBe('none')
+      }
+    }
+  })
+
+  test('Mac の答えは変えない(画素ありのターミナルだけ pane)', () => {
+    expect(playMode({ surface: 'terminal', hasPixels: true, platform: 'darwin' })).toBe('pane')
+    expect(playMode({ surface: 'terminal', hasPixels: false, platform: 'darwin' })).toBe('window')
+    expect(playMode({ surface: 'desktop', hasPixels: true, platform: 'darwin' })).toBe('window')
+  })
+
+  test('表示先がまだ分からないとき: 画素が出るなら terminal と読んで window、出ないなら未定のまま(ペインを描くときに決める)', () => {
+    for (const platform of ['win32-x64', 'linux-x64']) {
+      const guessed = surfaceOrGuess(null, true)
+      expect(guessed).toBe('terminal')
+      expect(playMode({ surface: guessed, hasPixels: true, platform })).toBe('window')
+    }
+    expect(surfaceOrGuess(undefined, false)).toBe(null)
+  })
+
+  test('ペインを描く時点で表示先が分かれば、Windows のデスクトップで window になる', () => {
+    expect(playMode({ surface: surfaceOrGuess('desktop', false), hasPixels: false, platform: 'win32-x64' })).toBe('window')
+  })
+})
+
+describe('遊べないときの案内文(OS ごと)', () => {
+  test('Mac は今までの文', () => {
+    expect(unavailableText('darwin')).toBe(NEEDS_TERMINAL)
+  })
+
+  test('Windows / Linux で表示先が合わないときは、Local のセッションで開くよう案内する', () => {
+    for (const platform of ['win32-x64', 'linux-x64']) {
+      expect(unavailableText(platform)).toBe(NEEDS_LOCAL_SESSION)
+    }
+    expect(NEEDS_LOCAL_SESSION).toContain('Local')
+  })
+
+  test('対応していない OS・CPU は、Mac だけという言い方をしない', () => {
+    expect(unavailableText(null)).toBe(NEEDS_OTHER_ENV)
+    expect(unavailableText('freebsd-x64')).toBe(NEEDS_OTHER_ENV)
+    expect(NEEDS_OTHER_ENV).not.toContain('macOS だけ')
+  })
+
+  test('どの文にも、専門用語やターミナル名を条件にした言い方が入らない', () => {
+    for (const text of [NEEDS_LOCAL_SESSION, NEEDS_OTHER_ENV, noBuildText('win32-x64'), noBuildText('linux-x64')]) {
+      for (const word of ['Ghostty', 'kitty', 'SHA', 'engine.json', 'asset']) expect(text).not.toContain(word)
+    }
+  })
+})
+
+describe('本体がウィンドウを開けなかったときの案内(OS ごと)', () => {
+  test('Mac は今までの文のまま', () => {
+    expect(windowUnavailableText('darwin')).toBe(WINDOW_UNAVAILABLE)
+  })
+
+  test('Windows / Linux は「この Mac」と言わず、Local のセッションを案内する', () => {
+    for (const text of [WINDOW_UNAVAILABLE_WINDOWS, WINDOW_UNAVAILABLE_LINUX]) {
+      expect(text).toContain('このセッションの種類では遊べません')
+      expect(text).toContain('Local のセッションで開いてください')
+      expect(text).not.toContain('この Mac')
+    }
+    expect(windowUnavailableText('win32-x64')).toBe(WINDOW_UNAVAILABLE_WINDOWS)
+    expect(windowUnavailableText('linux-x64')).toBe(WINDOW_UNAVAILABLE_LINUX)
+  })
+
+  test('Linux は画面を出す仕組み(X11)が要ることを添える', () => {
+    expect(WINDOW_UNAVAILABLE_LINUX).toContain('X11')
+    expect(WINDOW_UNAVAILABLE_WINDOWS).not.toContain('X11')
+  })
+
+  test('paneView のエラー画面が、OS に合った案内を付ける', () => {
+    const base = { scene: 'error', failure: 'the window could not be opened', stages: [], menuMode: null }
+    expect(paneView({ ...base, platform: 'darwin' }, 'window').guidance).toBe(WINDOW_UNAVAILABLE)
+    expect(paneView({ ...base, platform: 'win32-x64' }, 'window').guidance).toBe(WINDOW_UNAVAILABLE_WINDOWS)
+    expect(paneView({ ...base, platform: 'linux-x64' }, 'window').guidance).toBe(WINDOW_UNAVAILABLE_LINUX)
+    expect(paneView({ ...base, platform: 'win32-x64' }, 'pane').guidance).toBe(null)
+  })
+
+  test('この OS の本体がまだ無いときは、「ウィンドウを開けなかった」とは言わない', () => {
+    const view = paneView(
+      { scene: 'error', failure: noBuildText('win32-x64'), failureKind: 'noBuild', platform: 'win32-x64' },
+      'window',
+    )
+    expect(view.text).toBe(noBuildText('win32-x64'))
+    expect(view.guidance).toBe(null)
+  })
+})
+
+// Mac の本体を直した不具合(PORTING.md 1.1): @state error の詳細がペインに出ていなかった
+describe('@state error の詳細を画面に出す', () => {
+  const base = { platform: 'darwin', stages: [], menuMode: null, failure: null }
+
+  test('本体が送る 4 つの文が、そのまま出る', () => {
+    for (const detail of [
+      '少し待ってね',
+      'そのコースには、まだ誰もいません',
+      '通信に失敗しました。もう一度お試しください',
+      'この版では、まだ隠れられません',
+    ]) {
+      const message = parseEngineLine('@state error ' + detail)
+      expect(message).toEqual({ type: 'state', state: 'error', detail })
+      for (const mode of ['pane', 'window'] as const) {
+        const view = paneView({ ...base, scene: message?.state, sceneDetail: message?.detail }, mode)
+        expect(view.kind).toBe('error')
+        expect(view.text).toBe(detail)
+        expect(view.button.label).toBe('もう一度')
+      }
+    }
+  })
+
+  test('詳細が無い error は、今までどおりの文', () => {
+    const message = parseEngineLine('@state error')
+    const view = paneView({ ...base, scene: message?.state, sceneDetail: message?.detail }, 'window')
+    expect(view.text).toBe('うまく動いていません。')
+  })
+
+  test('@fatal や起動失敗の文(failure)は、詳細より優先して今までどおり出す', () => {
+    const view = paneView({ ...base, scene: 'error', sceneDetail: '少し待ってね', failure: 'assets.pack was not found' }, 'window')
+    expect(view.text).toBe('assets.pack was not found')
+  })
+
+  test('error 以外の場面の詳細は、error の文に混ざらない', () => {
+    const view = paneView({ ...base, scene: 'unknown-word', sceneDetail: 'みつけた 1 · みつけられなかった 0' }, 'pane')
+    expect(view.text).toBe('うまく動いていません。')
+  })
+})
+
+// 新しい本体(native-engine)が実際に出す行の列を、プラグインの読み手に通す
+describe('新しい本体の行', () => {
+  const lines = [
+    '@window starting',
+    '@window shown',
+    '@state loading',
+    '@stages [{"id":"burgerland-a","name":"ミッドナイト・バーガーランド"},{"id":"sweets-a","name":"サンデー・スイーツガーデン"}]',
+    '@state menu',
+    '@window guide menu',
+    '@window playing',
+    '@state loading',
+    '@state seek',
+    '@hud 探す=みつけた 0 / のこり 2',
+    '@window resting',
+    '@state result みつけた 1 · みつけられなかった 1',
+    '@state error 少し待ってね',
+  ]
+
+  test('@window の行は読み捨てる(場面にも状態にも影響しない)', () => {
+    for (const line of lines.filter((l) => l.startsWith('@window'))) expect(parseEngineLine(line)).toBe(null)
+  })
+
+  test('それ以外は、Mac の本体と同じ形に読める', () => {
+    const parsed = lines.map(parseEngineLine).filter((m) => m !== null)
+    expect(parsed.map((m) => m.type)).toEqual(['state', 'stages', 'state', 'state', 'state', 'hud', 'state', 'state'])
+    const stages = parsed.find((m) => m.type === 'stages')
+    expect(stages.stages.map((s: { id: string }) => s.id)).toEqual(['burgerland-a', 'sweets-a'])
+    expect(parsed.find((m) => m.type === 'hud').text).toBe('探す=みつけた 0 / のこり 2')
+    expect(parsed.filter((m) => m.type === 'frame').length).toBe(0)
+  })
+
+  test('@fatal の 3 つの理由はそのまま理由として読める', () => {
+    for (const reason of ['the window could not be opened', 'assets.pack was not found', 'assets.pack could not be read']) {
+      expect(parseEngineLine('@fatal ' + reason)).toEqual({ type: 'fatal', reason })
+    }
+  })
+
+  test('Windows の標準出力が \\r\\n で届いても、語が壊れない', () => {
+    expect(parseEngineLine('@state menu\r')).toEqual({ type: 'state', state: 'menu', detail: '' })
+    expect(parseEngineLine('@state error 少し待ってね\r')).toEqual({ type: 'state', state: 'error', detail: '少し待ってね' })
+    expect(parseEngineLine('@fatal assets.pack was not found\r')).toEqual({ type: 'fatal', reason: 'assets.pack was not found' })
+    expect(parseEngineLine('@hud 探す=みつけた 1 / のこり 1\r')).toEqual({ type: 'hud', text: '探す=みつけた 1 / のこり 1' })
+    const split = splitLines('', '@state loading\r\n@state menu\r\n@sta')
+    expect(split.lines.map(parseEngineLine)).toEqual([
+      { type: 'state', state: 'loading', detail: '' },
+      { type: 'state', state: 'menu', detail: '' },
+    ])
+    expect(split.pending).toBe('@sta')
+  })
+
+  test('日本語の行が、かたまりの途中で切れて届いても元に戻る', () => {
+    let pending = ''
+    const out: string[] = []
+    for (const piece of ['@state error 少し', '待ってね\n@state me', 'nu\n']) {
+      const split = splitLines(pending, piece)
+      pending = split.pending
+      out.push(...split.lines)
+    }
+    expect(out).toEqual(['@state error 少し待ってね', '@state menu'])
+  })
+})
+
+describe('この OS の配布物があるか(resolveEngineAsset)', () => {
+  const sha = 'a'.repeat(64)
+  const darwinOnly = parseEngineAssets(
+    JSON.stringify({
+      version: '0.0.4',
+      url: 'https://example.invalid/macos.tar.gz',
+      sha256: sha,
+      assets: { darwin: { url: 'https://example.invalid/macos.tar.gz', sha256: sha, entry: 'sukoshi-tako-engine/ChameleonPane' } },
+    }),
+  )
+  const withWindows = parseEngineAssets(
+    JSON.stringify({
+      version: '0.1.0',
+      url: 'https://example.invalid/macos.tar.gz',
+      sha256: sha,
+      assets: {
+        darwin: { url: 'https://example.invalid/macos.tar.gz', sha256: sha, entry: 'sukoshi-tako-engine/ChameleonPane' },
+        'win32-x64': {
+          url: 'https://example.invalid/win.tar.gz',
+          sha256: 'b'.repeat(64),
+          entry: 'sukoshi-tako-engine/sukoshi-tako.exe',
+        },
+        'linux-x64': {
+          url: 'https://example.invalid/linux.tar.gz',
+          sha256: 'c'.repeat(64),
+          entry: 'sukoshi-tako-engine/sukoshi-tako',
+        },
+      },
+    }),
+  )
+
+  test('いま出している engine.json の形(Mac だけ)でも、Mac は通る', () => {
+    const found = resolveEngineAsset(darwinOnly, 'darwin')
+    expect(found.ok).toBe(true)
+    expect(found.asset.entry).toBe('sukoshi-tako-engine/ChameleonPane')
+  })
+
+  test('Windows / Linux の行が無いときは、落ちずに「まだ無い」と分かる案内になる', () => {
+    for (const [platform, name] of [['win32-x64', 'Windows'], ['linux-x64', 'Linux']] as const) {
+      const found = resolveEngineAsset(darwinOnly, platform)
+      expect(found.ok).toBe(false)
+      expect(found.kind).toBe('noBuild')
+      expect(found.text).toBe(noBuildText(platform))
+      expect(found.text).toContain(name)
+      expect(found.text).toContain('まだ')
+    }
+  })
+
+  test('Windows / Linux の行があれば、取得に進める(取得の組み立てが null にならない)', () => {
+    for (const platform of ['win32-x64', 'linux-x64']) {
+      const found = resolveEngineAsset(withWindows, platform)
+      expect(found.ok).toBe(true)
+      const plan = fetchPlan({ platform, root: platform === 'win32-x64' ? 'C:\\plugin' : '/plugin', url: found.asset.url })
+      expect(plan).not.toBe(null)
+      expect(found.asset.sha256).toMatch(/^[0-9a-f]{64}$/)
+    }
+    expect(resolveEngineAsset(withWindows, 'win32-x64').asset.entry).toBe('sukoshi-tako-engine/sukoshi-tako.exe')
+  })
+
+  test('対応していない OS・CPU は unsupported', () => {
+    for (const platform of [null, undefined, 'freebsd-x64']) {
+      const found = resolveEngineAsset(withWindows, platform)
+      expect(found).toEqual({ ok: false, kind: 'unsupported', text: NEEDS_OTHER_ENV })
+    }
+  })
+
+  test('engine.json が読めなかったときは manifest', () => {
+    expect(resolveEngineAsset(null, 'darwin')).toEqual({ ok: false, kind: 'manifest', text: 'engine.json が読めません。' })
+  })
+
+  test('Windows 向けの行が壊れているときは、無いものとして扱う(落ちない)', () => {
+    const broken = parseEngineAssets(
+      JSON.stringify({
+        version: '0.1.0',
+        url: 'https://example.invalid/macos.tar.gz',
+        sha256: sha,
+        assets: { 'win32-x64': { url: 'https://example.invalid/win.tar.gz', sha256: 'short', entry: 'e/x.exe' } },
+      }),
+    )
+    expect(resolveEngineAsset(broken, 'win32-x64').kind).toBe('noBuild')
+    expect(resolveEngineAsset(broken, 'darwin').ok).toBe(true)
+  })
+})
+
+describe('本体の起動(argv と環境変数)', () => {
+  const asset = { url: 'u', sha256: 'a'.repeat(64), entry: 'sukoshi-tako-engine/sukoshi-tako.exe' }
+
+  test('Windows: \\ 区切りの exe と、環境変数一式(共有メモリの名前は渡さない)', () => {
+    const root = 'C:\\Users\\taro\\.claude\\plugins\\cache\\tako'
+    const request = launchRequest({
+      platform: 'win32-x64',
+      mode: 'window',
+      root,
+      asset,
+      engineDir: root + '\\dist\\sukoshi-tako-engine',
+      id: 'ab12',
+      inputPath: 'C:\\Users\\taro\\AppData\\Local\\Temp\\sukoshi-tako-ab12.input',
+    })
+    expect(request).toEqual({
+      argv: [root + '\\dist\\sukoshi-tako-engine\\sukoshi-tako.exe'],
+      env: {
+        SUKOSHI_TAKO_MODE: 'window',
+        SUKOSHI_TAKO_INPUT: 'C:\\Users\\taro\\AppData\\Local\\Temp\\sukoshi-tako-ab12.input',
+        SUKOSHI_TAKO_PACK: root + '\\dist\\sukoshi-tako-engine\\assets.pack',
+        SUKOSHI_TAKO_WIDTH: '1280',
+        SUKOSHI_TAKO_HEIGHT: '720',
+      },
+    })
+  })
+
+  test('Windows: 空白入りと日本語入りのフォルダでも、パスは 1 つの引数のまま・文字を変えずに組み立てる', () => {
+    for (const user of ['ta ro', '山田 太郎', 'ユーザー']) {
+      const root = `C:\\Users\\${user}\\.claude\\plugins\\tako 1.0`
+      const plan = fetchPlan({ platform: 'win32-x64', root, url: 'https://example.invalid/w.tar.gz' })
+      expect(plan).not.toBe(null)
+      expect(plan?.unpack).toEqual(['tar.exe', '-xzf', root + '\\engine.tar.gz', '-C', root + '\\dist'])
+      expect(plan?.hash).toEqual(['certutil', '-hashfile', root + '\\engine.tar.gz', 'SHA256'])
+      expect(plan?.removeOld).toEqual(['cmd', '/c', 'rmdir', '/s', '/q', root + '\\dist\\sukoshi-tako-engine'])
+      const request = launchRequest({
+        platform: 'win32-x64',
+        mode: 'window',
+        root,
+        asset,
+        engineDir: plan?.engineDir,
+        id: 'ab12',
+        inputPath: inputPathFor(`C:\\Users\\${user}\\AppData\\Local\\Temp`, 'ab12', 'win32-x64'),
+      })
+      expect(request?.argv).toEqual([root + '\\dist\\sukoshi-tako-engine\\sukoshi-tako.exe'])
+      expect(request?.argv.length).toBe(1)
+      expect(request?.env.SUKOSHI_TAKO_PACK).toBe(root + '\\dist\\sukoshi-tako-engine\\assets.pack')
+      expect(request?.env.SUKOSHI_TAKO_INPUT).toBe(`C:\\Users\\${user}\\AppData\\Local\\Temp\\sukoshi-tako-ab12.input`)
+      expect(isAbsolutePath(request?.argv[0], 'win32-x64')).toBe(true)
+      expect(isAbsolutePath(request?.env.SUKOSHI_TAKO_PACK, 'win32-x64')).toBe(true)
+    }
+  })
+
+  test('Windows: root が / 区切りで届いても、cmd に渡す側は \\ にそろえる(cmd は / をオプションと読む)', () => {
+    const plan = fetchPlan({ platform: 'win32-x64', root: 'C:/Home/ta ro/plugin/', url: 'https://example.invalid/w.tar.gz' })
+    expect(plan?.archive).toBe('C:\\Home\\ta ro\\plugin\\engine.tar.gz')
+    expect(plan?.removeOld).toEqual(['cmd', '/c', 'rmdir', '/s', '/q', 'C:\\Home\\ta ro\\plugin\\dist\\sukoshi-tako-engine'])
+    expect(enginePathFor('C:/Home/ta ro/plugin/', 'win32-x64', 'sukoshi-tako-engine/x.exe')).toBe(
+      'C:\\Home\\ta ro\\plugin\\dist\\sukoshi-tako-engine\\x.exe',
+    )
+    expect(removeFileArgv('C:/Temp/a.input', 'win32-x64')).toEqual(['cmd', '/c', 'del', '/f', '/q', 'C:\\Temp\\a.input'])
+  })
+
+  test('Linux: / 区切り。空白入りでも 1 つの引数', () => {
+    const root = '/home/ta ro/.claude/plugins/tako'
+    const request = launchRequest({
+      platform: 'linux-x64',
+      mode: 'window',
+      root,
+      asset: { ...asset, entry: 'sukoshi-tako-engine/sukoshi-tako' },
+      engineDir: root + '/dist/sukoshi-tako-engine',
+      id: 'ab12',
+      inputPath: '/tmp/sukoshi-tako-ab12.input',
+    })
+    expect(request?.argv).toEqual([root + '/dist/sukoshi-tako-engine/sukoshi-tako'])
+    expect(request?.env.SUKOSHI_TAKO_MODE).toBe('window')
+    expect(request?.env.SUKOSHI_TAKO_PACK).toBe(root + '/dist/sukoshi-tako-engine/assets.pack')
+    expect(request?.env).not.toHaveProperty('SUKOSHI_TAKO_FRAMES')
+  })
+
+  test('Mac: 今までと同じ(共有メモリの名前を渡し、ウィンドウ方式は windowEntry、パックは展開先)', () => {
+    const macAsset = {
+      url: 'u',
+      sha256: 'a'.repeat(64),
+      entry: 'sukoshi-tako-engine/ChameleonPane',
+      windowEntry: 'sukoshi-tako-engine/SukoshiTako.app/Contents/MacOS/ChameleonPane',
+    }
+    const common = { platform: 'darwin', root: '/plugin', asset: macAsset, engineDir: '/plugin/dist/sukoshi-tako-engine', id: 'ab12', inputPath: '/var/T/x.input' }
+    expect(launchRequest({ ...common, mode: 'pane' })).toEqual({
+      argv: ['/plugin/dist/sukoshi-tako-engine/ChameleonPane'],
+      env: {
+        SUKOSHI_TAKO_FRAMES: '/tkab12-',
+        SUKOSHI_TAKO_INPUT: '/var/T/x.input',
+        SUKOSHI_TAKO_WIDTH: '640',
+        SUKOSHI_TAKO_HEIGHT: '360',
+        SUKOSHI_TAKO_MODE: 'pane',
+        SUKOSHI_TAKO_PACK: '/plugin/dist/sukoshi-tako-engine/assets.pack',
+      },
+    })
+    expect(launchRequest({ ...common, mode: 'window' })).toEqual({
+      argv: ['/plugin/dist/sukoshi-tako-engine/SukoshiTako.app/Contents/MacOS/ChameleonPane'],
+      env: {
+        SUKOSHI_TAKO_FRAMES: '/tkab12-',
+        SUKOSHI_TAKO_INPUT: '/var/T/x.input',
+        SUKOSHI_TAKO_WIDTH: '1280',
+        SUKOSHI_TAKO_HEIGHT: '720',
+        SUKOSHI_TAKO_MODE: 'window',
+        SUKOSHI_TAKO_PACK: '/plugin/dist/sukoshi-tako-engine/assets.pack',
+      },
+    })
+  })
+
+  test('知らない OS や、置き場所が分からないときは null(何も起動しない)', () => {
+    expect(launchRequest({ platform: null, mode: 'window', root: '/p', asset, engineDir: '/p/d', id: 'a', inputPath: '/x' })).toBe(null)
+  })
+
+  test('engineEnv は、入力ファイルの場所と大きさとモードを必ず入れる', () => {
+    const env = engineEnv({ platform: 'win32-x64', mode: 'window', id: 'ab12', inputPath: 'C:\\T\\a.input', packPath: null })
+    expect(env.SUKOSHI_TAKO_INPUT).toBe('C:\\T\\a.input')
+    expect(env.SUKOSHI_TAKO_MODE).toBe('window')
+    expect(env).not.toHaveProperty('SUKOSHI_TAKO_PACK')
+  })
+})
+
+describe('開発用の本体の上書き(OS を渡す)', () => {
+  const common = { mode: 'window', id: 'ab12', inputPath: 'C:\\T\\a.input', root: 'C:\\plugin' }
+
+  test('Windows: C:\\ の絶対パスはそのまま argv に。Mac 用の DYLD_ は付けない', () => {
+    const request = devEngineRequest({ ...common, platform: 'win32-x64', override: 'C:\\dev\\sukoshi-tako.exe' })
+    expect(request?.argv).toEqual(['C:\\dev\\sukoshi-tako.exe'])
+    expect(request?.env).not.toHaveProperty('DYLD_FRAMEWORK_PATH')
+    expect(request?.env.SUKOSHI_TAKO_INPUT).toBe('C:\\T\\a.input')
+  })
+
+  test('Mac: 今までどおり隣のフレームワークを教える', () => {
+    const request = devEngineRequest({ ...common, platform: 'darwin', mode: 'pane', inputPath: '/x.input', root: '/p', override: '/opt/dev/ChameleonPane' })
+    expect(request?.argv).toEqual(['/opt/dev/ChameleonPane'])
+    expect(request?.env.DYLD_FRAMEWORK_PATH).toBe('/opt/dev:/opt/dev/PackageFrameworks')
+  })
+
+  test('Linux: DYLD_ は付けない', () => {
+    const request = devEngineRequest({ ...common, platform: 'linux-x64', inputPath: '/x.input', root: '/p', override: '/opt/dev/sukoshi-tako' })
+    expect(request?.env).not.toHaveProperty('DYLD_FRAMEWORK_PATH')
+  })
+
+  test('fake は同梱の偽エンジンを python3 で', () => {
+    expect(devEngineRequest({ ...common, platform: 'darwin', inputPath: '/x', root: '/p', override: 'fake' })?.argv).toEqual([
+      'python3',
+      '-u',
+      '/p/dev/fake_engine.py',
+    ])
+  })
+})
+
+// Windows では、止めた子も「終了コード」で返る(signal は null)。コードだけでは「人が閉じた」「プラグインが止めた」
+// 「落ちた」を見分けられないので、止めたかどうかは自分の記録で決める。
+describe('本体の終わり方の解釈', () => {
+  test('プラグインが止めたなら、Windows のように kill が終了コード 1 で返っても stopped', () => {
+    expect(classifyEngineEnd({ result: { code: 1, signal: null }, stopRequested: true, hasFatal: false })).toBe('stopped')
+    expect(classifyEngineEnd({ result: { code: null, signal: 'SIGTERM' }, stopRequested: true, hasFatal: false })).toBe('stopped')
+    expect(classifyEngineEnd({ result: { code: 0, signal: null }, stopRequested: true, hasFatal: false })).toBe('stopped')
+    expect(classifyEngineEnd({ result: undefined, stopRequested: true, hasFatal: false })).toBe('stopped')
+  })
+
+  test('止めていないのに終了コード 0 なら、人がウィンドウを閉じた(入力ファイルが消えて自分で終わった場合も同じ)', () => {
+    expect(classifyEngineEnd({ result: { code: 0, signal: null }, stopRequested: false, hasFatal: false })).toBe('closed')
+  })
+
+  test('止めていないのに 0 以外・signal なら、落ちた', () => {
+    expect(classifyEngineEnd({ result: { code: 1, signal: null }, stopRequested: false, hasFatal: false })).toBe('crashed')
+    expect(classifyEngineEnd({ result: { code: -1073741819, signal: null }, stopRequested: false, hasFatal: false })).toBe('crashed')
+    expect(classifyEngineEnd({ result: { code: null, signal: 'SIGSEGV' }, stopRequested: false, hasFatal: false })).toBe('crashed')
+    expect(classifyEngineEnd({ result: undefined, stopRequested: false, hasFatal: false })).toBe('crashed')
+  })
+
+  test('@fatal を受けたあとの終了は、コードに関わらず fatal(理由は既に画面にある)', () => {
+    expect(classifyEngineEnd({ result: { code: 1, signal: null }, stopRequested: false, hasFatal: true })).toBe('fatal')
+    expect(classifyEngineEnd({ result: { code: 0, signal: null }, stopRequested: true, hasFatal: true })).toBe('fatal')
+  })
+
+  // Mac で今やっていることを、そのまま固定する(OS に依らない)
+  test('終わったあとの画面: ウィンドウ方式で失敗が無ければ静かにペインを閉じる', () => {
+    expect(engineEndAction({ mode: 'window', hasFailure: false, isPlaying: true })).toBe('closePane')
+    expect(engineEndAction({ mode: 'window', hasFailure: false, isPlaying: false })).toBe('closePane')
+  })
+
+  test('終わったあとの画面: 失敗があるか、ペイン方式なら、遊んでいた最中だけ「終了しました」', () => {
+    expect(engineEndAction({ mode: 'window', hasFailure: true, isPlaying: true })).toBe('markEnded')
+    expect(engineEndAction({ mode: 'window', hasFailure: true, isPlaying: false })).toBe('none')
+    expect(engineEndAction({ mode: 'pane', hasFailure: false, isPlaying: true })).toBe('markEnded')
+    expect(engineEndAction({ mode: 'pane', hasFailure: false, isPlaying: false })).toBe('none')
+    expect(engineEndAction({ mode: 'pane', hasFailure: true, isPlaying: false })).toBe('none')
+  })
+})
+
+describe('レビューの直し(2026-10-05)', () => {
+  test('本体が @state error で伝えた失敗(少し待ってね、など)には、ウィンドウを開けなかった案内を付けない', () => {
+    const state = { ...initialState(), scene: 'error', sceneDetail: '少し待ってね', failure: null, failureKind: null, platform: 'win32-x64' }
+    const view = paneView(state, 'window')
+    expect(view.text).toBe('少し待ってね')
+    expect(view.guidance).toBe(null)
+  })
+
+  test('Windows の入力ファイルの場所に cmd の特殊文字があれば、cmd に渡さない(後始末を諦める)', () => {
+    expect(removeFileArgv('C:\\Users\\A&B\\AppData\\Local\\Temp\\sukoshi-tako-ab12.input', 'win32-x64')).toBe(null)
+    expect(removeFileArgv('C:\\Users\\100%\\Temp\\a.input', 'win32-x64')).toBe(null)
+    // 空白と日本語は通す
+    expect(removeFileArgv('C:\\Users\\山田 太郎\\AppData\\Local\\Temp\\a.input', 'win32-x64')).toEqual([
+      'cmd', '/c', 'del', '/f', '/q', 'C:\\Users\\山田 太郎\\AppData\\Local\\Temp\\a.input',
+    ])
+    // Mac / Linux は cmd を通さないので、そのまま
+    expect(removeFileArgv('/tmp/a&b.input', 'darwin')).toEqual(['rm', '-f', '/tmp/a&b.input'])
+  })
+})
+
+describe('開発用の本体の上書きは、環境変数だけでは効かない(レビュー #47)', () => {
+  test('プラグインのフォルダに印のファイルが無ければ、SUKOSHI_TAKO_DEV=1 と絶対パスがあっても使わない', () => {
+    // 環境変数は、開いたリポジトリの設定から入りうる。印のファイルは、その人が自分で置かないと存在しない
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'darwin', false)).toBe(null)
+    expect(resolveEngineOverride('fake', '1', 'darwin', false)).toBe(null)
+    expect(resolveEngineOverride('C:\\dev\\engine.exe', '1', 'win32-x64', false)).toBe(null)
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'darwin', undefined)).toBe(null)
+  })
+
+  test('印のファイルがあり、SUKOSHI_TAKO_DEV=1 で、絶対パスのときだけ使う', () => {
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', '1', 'darwin', true)).toBe('/opt/dev/ChameleonPane')
+    expect(resolveEngineOverride('fake', '1', 'darwin', true)).toBe('fake')
+    expect(resolveEngineOverride('/opt/dev/ChameleonPane', undefined, 'darwin', true)).toBe(null)
+    expect(resolveEngineOverride('./evil', '1', 'darwin', true)).toBe(null)
+  })
+
+  test('印のファイルの場所は、プラグインのフォルダの中', () => {
+    expect(devMarkerPath('/plugins/cache/x/tako/0.0.5')).toBe('/plugins/cache/x/tako/0.0.5/dev/allow-local-engine')
   })
 })
