@@ -28,6 +28,7 @@ import {
   parseEngineAssets,
   parseEngineLine,
   platformKey,
+  playCommandPlan,
   playMode,
   pushEvent,
   reduce,
@@ -37,7 +38,6 @@ import {
   devMarkerPath,
   splitLines,
   surfaceOrGuess,
-  unavailableText,
 } from './logic.js'
 
 const PANE = 'sukoshi-tako'
@@ -84,8 +84,6 @@ let hasPixels = null
 // このセッションの OS と CPU。1 回だけ調べる
 let platformCache = null
 let isPlatformKnown = false
-// /tako:play の時点で表示先が分からなかったので、ペインを描くときに始める
-let wantsPlay = false
 // SUKOSHI_TAKO_DEBUG=1 のとき、ターミナルから届いたままのキー名と、押下中のキーを画面に出す
 let isDebug = false
 let lastKey = ''
@@ -576,14 +574,6 @@ async function drawPane($, e) {
   const elements = $.ui.resolve(e)
   const mode = await modeFor($, e.surface)
   if (mode !== state.mode) await dispatch($, { type: 'setMode', mode })
-  // /tako:play の時点で表示先が分からなかった分は、ここで始める
-  if (wantsPlay) {
-    wantsPlay = false
-    if (mode !== 'none') {
-      await dispatch($, { type: 'openedByPerson' })
-      void startPlaying($)
-    }
-  }
   const view = paneView(
     {
       ...state,
@@ -634,19 +624,22 @@ export function register(on) {
       await $.store.set('isOn', true)
       await dispatch($, { type: 'setOn', isOn: true })
       // 表示先がいま付いているかを確かめ直す(デスクトップでは起動時に無いことがある)
-      const mode = await refreshMode($)
-      if (mode === 'none') return { text: unavailableText(await platformFor($)) }
-      if (mode === null) {
-        // 表示先がまだ分からない(デスクトップアプリなど)。ペインを開き、描くときに決めて始める
-        wantsPlay = true
+      const plan = playCommandPlan({ mode: await refreshMode($), platform: await platformFor($) })
+      if (!plan.start) return { text: plan.text }
+      if (plan.waitsForPane) {
+        // 絵をペインの中に出す方式。自分で開いたペインは、狭いターミナルでも置かれる
         await $.ui.open(paneOpenArgs(PANE, TITLE))
+        await dispatch($, { type: 'openedByPerson' })
+        await startPlaying($)
         return {}
       }
-      // 自分で開いたペインは、狭いターミナルでも置かれる
-      await $.ui.open(paneOpenArgs(PANE, TITLE))
+      // ウィンドウ方式(表示先がまだ分からないときも含む)。ゲームはペインが無くても始められるので、
+      // ペインが開くのを待たない。開けなかった・見えていないときも、チャットの 1 行は必ず返る
+      if (plan.mode !== state.mode) await dispatch($, { type: 'setMode', mode: plan.mode })
       await dispatch($, { type: 'openedByPerson' })
-      await startPlaying($)
-      return {}
+      void startPlaying($)
+      void $.ui.open(paneOpenArgs(PANE, TITLE)).catch(() => {})
+      return { text: plan.text }
     })
   }
 

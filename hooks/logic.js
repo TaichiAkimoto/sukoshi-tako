@@ -641,6 +641,26 @@ export function unavailableText(platform) {
   return NEEDS_OTHER_ENV
 }
 
+// ウィンドウ方式で始めるときに、チャットへ返す 1 行。絵も進み具合もペインと別ウィンドウに出るので、
+// どちらも見えていない人にも「始まっている」「どこを見ればよいか」が伝わるようにする
+export const PLAY_STARTING_IN_WINDOW =
+  'すこしタコを始めます。ゲームは別のウィンドウで開きます(最初の 1 回は、準備に 1 分ほどかかります)。' +
+  '出ないときは、横の「すこしタコ」の画面に理由が出ます。'
+
+// /tako:play を受けたときに何をするか。
+//   mode は playMode の結果。表示先がまだ分からないとき(デスクトップアプリなど)は null。
+// 表示先が分からなくても、別ウィンドウで遊べる OS なら、その場で始める。ペインが描かれるのを
+// 待つと、ペインが出ない・見えないときに何も起きないまま止まる(Windows、2026-10-06)。
+//   waitsForPane  ペインが開くのを待ってから始める(絵をペインの中に出す方式だけ)
+export function playCommandPlan({ mode, platform }) {
+  if (mode === 'pane') return { start: true, mode: 'pane', waitsForPane: true, text: null }
+  const canUseWindow = platform === 'darwin' || platform === 'win32-x64' || platform === 'linux-x64'
+  if (mode === 'window' || (mode === null && canUseWindow)) {
+    return { start: true, mode: 'window', waitsForPane: false, text: PLAY_STARTING_IN_WINDOW }
+  }
+  return { start: false, mode: 'none', waitsForPane: false, text: unavailableText(platform) }
+}
+
 // この OS 向けのゲーム本体が engine.json にまだ無いときの案内
 export function noBuildText(platform) {
   const name = platform === 'win32-x64' ? 'Windows' : platform === 'linux-x64' ? 'Linux' : 'この OS'

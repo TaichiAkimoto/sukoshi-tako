@@ -29,6 +29,8 @@ import {
   paneView,
   parseEngineAssets,
   parseEngineLine,
+  playCommandPlan,
+  PLAY_STARTING_IN_WINDOW,
   parseEngineManifest,
   platformKey,
   playMode,
@@ -1079,6 +1081,59 @@ describe('commandNames / commandAction', () => {
   test('play off still turns it off, whatever the spacing or case', () => {
     expect(commandAction('tako:play', 'off')).toBe('off')
     expect(commandAction('tako:play', '  OFF ')).toBe('off')
+  })
+})
+
+// /tako:play を送ったのに、画面に何も出ないまま止まった(Windows のデスクトップアプリ、2026-10-06)。
+// 返事の文が無く、ゲームの開始が「ペインが描かれたこと」だけに掛かっていた。
+describe('playCommandPlan', () => {
+  test('surface unknown on a supported OS: start in a window now and say so in the chat', () => {
+    for (const platform of ['win32-x64', 'linux-x64', 'darwin']) {
+      expect(playCommandPlan({ mode: null, platform })).toEqual({
+        start: true,
+        mode: 'window',
+        waitsForPane: false,
+        text: PLAY_STARTING_IN_WINDOW,
+      })
+    }
+  })
+
+  test('window mode: start and say so in the chat (the picture is not in the pane)', () => {
+    expect(playCommandPlan({ mode: 'window', platform: 'win32-x64' })).toEqual({
+      start: true,
+      mode: 'window',
+      waitsForPane: false,
+      text: PLAY_STARTING_IN_WINDOW,
+    })
+  })
+
+  test('pane mode: as before, the pane itself is the answer', () => {
+    expect(playCommandPlan({ mode: 'pane', platform: 'darwin' })).toEqual({
+      start: true,
+      mode: 'pane',
+      waitsForPane: true,
+      text: null,
+    })
+  })
+
+  test('cannot play here: do not start, say why', () => {
+    expect(playCommandPlan({ mode: 'none', platform: 'win32-x64' })).toEqual({
+      start: false,
+      mode: 'none',
+      waitsForPane: false,
+      text: NEEDS_LOCAL_SESSION,
+    })
+    expect(playCommandPlan({ mode: null, platform: null })).toEqual({
+      start: false,
+      mode: 'none',
+      waitsForPane: false,
+      text: NEEDS_OTHER_ENV,
+    })
+  })
+
+  test('the chat line tells the person where to look when nothing shows up', () => {
+    expect(PLAY_STARTING_IN_WINDOW).toContain('別のウィンドウ')
+    expect(PLAY_STARTING_IN_WINDOW).toContain('すこしタコ')
   })
 })
 
