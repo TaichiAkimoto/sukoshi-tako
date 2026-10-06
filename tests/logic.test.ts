@@ -1428,6 +1428,14 @@ describe('遊べないときの案内文(OS ごと)', () => {
     expect(NEEDS_OTHER_ENV).not.toContain('macOS だけ')
   })
 
+  test('Windows / Linux への対応は取りやめた(2026-10-06)。「準備中」「準備しています」と約束しない', () => {
+    for (const text of [NEEDS_OTHER_ENV, noBuildText('win32-x64'), noBuildText('linux-x64'), noBuildText(null)]) {
+      expect(text).not.toContain('準備')
+      expect(text).not.toContain('まだ')
+      expect(text).toContain('Mac')
+    }
+  })
+
   test('どの文にも、専門用語やターミナル名を条件にした言い方が入らない', () => {
     for (const text of [NEEDS_LOCAL_SESSION, NEEDS_OTHER_ENV, noBuildText('win32-x64'), noBuildText('linux-x64')]) {
       for (const word of ['Ghostty', 'kitty', 'SHA', 'engine.json', 'asset']) expect(text).not.toContain(word)
@@ -1611,14 +1619,13 @@ describe('この OS の配布物があるか(resolveEngineAsset)', () => {
     expect(found.asset.entry).toBe('sukoshi-tako-engine/ChameleonPane')
   })
 
-  test('Windows / Linux の行が無いときは、落ちずに「まだ無い」と分かる案内になる', () => {
+  test('Windows / Linux の行が無いときは、落ちずに「無い」と分かる案内になる', () => {
     for (const [platform, name] of [['win32-x64', 'Windows'], ['linux-x64', 'Linux']] as const) {
       const found = resolveEngineAsset(darwinOnly, platform)
       expect(found.ok).toBe(false)
       expect(found.kind).toBe('noBuild')
       expect(found.text).toBe(noBuildText(platform))
       expect(found.text).toContain(name)
-      expect(found.text).toContain('まだ')
     }
   })
 

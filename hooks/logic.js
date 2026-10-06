@@ -698,7 +698,7 @@ export const NEEDS_LOCAL_SESSION =
   'すこしタコは、ターミナルか Claude デスクトップアプリの Claude Code(Local のセッション)から開いてください。'
 // 対応していない OS・CPU
 export const NEEDS_OTHER_ENV =
-  'お使いのパソコンの種類には、まだ対応していません。いまのところ、Mac のほか、Windows と Linux(どちらも 64 ビット)向けに準備しています。'
+  'お使いのパソコンの種類には対応していません。すこしタコは Mac で遊べます。'
 // ウィンドウ方式のペインに出す案内
 export const WINDOW_NOTE = 'ゲームは別のウィンドウに出ています。'
 export const WINDOW_HELP = 'キーとマウスは、ゲームのウィンドウで操作します。ウィンドウを閉じると終わります。'
@@ -743,10 +743,11 @@ export function playCommandPlan({ mode, platform }) {
   return { start: false, mode: 'none', waitsForPane: false, text: unavailableText(platform) }
 }
 
-// この OS 向けのゲーム本体が engine.json にまだ無いときの案内
+// この OS 向けのゲーム本体が engine.json に無いときの案内。
+// Windows / Linux への対応は取りやめた(2026-10-06)ので、「準備中」とは言わない
 export function noBuildText(platform) {
   const name = platform === 'win32-x64' ? 'Windows' : platform === 'linux-x64' ? 'Linux' : 'この OS'
-  return name + ' 向けのゲーム本体は、まだ公開していません。準備中です。'
+  return name + ' 向けのゲーム本体はありません。すこしタコは Mac で遊べます。'
 }
 
 // 絵のすぐ下に出す。1 行に詰めると狭いペインで折り返して絵から離れるので、短い行に分ける

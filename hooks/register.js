@@ -440,7 +440,8 @@ async function runEngine($) {
   const kind = classifyEngineEnd({ result, stopRequested, hasFatal: failureKind === 'fatal' })
   $.ui.log('すこしタコの本体が終わりました: ' + kind + ' ' + JSON.stringify(result ?? null), { to: 'debug' })
   // 止めていないのに落ちた。失敗として扱い(黙ってペインを閉じない)、チャットにも知らせる
-  const endNotice = failure ? null : engineEndNotice({ kind, result, sawOutput, tail, wasUp })
+  // 改行なしで終わった最後の行(pending)も、添える出力に入れる
+  const endNotice = failure ? null : engineEndNotice({ kind, result, sawOutput, tail: outputTail(tail, pending), wasUp })
   if (endNotice) {
     failure = endNotice.split('\n')[0].replace(/^すこしタコ: /, '')
     scene = 'error'

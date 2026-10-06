@@ -8,10 +8,6 @@
     {
       "name": "tako",
       "source": "./"
-    },
-    {
-      "name": "tako-check",
-      "source": "./windows-check"
     }
   ]
 }
