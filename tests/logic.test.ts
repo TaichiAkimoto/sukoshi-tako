@@ -1176,6 +1176,14 @@ describe('失敗はチャットにも知らせる', () => {
     }
   })
 
+  test('ended with code 0 before it showed anything: not a quiet close — say so, with what it printed last', () => {
+    expect(
+      engineEndNotice({ kind: 'closed', result: { code: 0, signal: null }, sawOutput: true, tail: 'usage: sukoshi-tako-engine run\n', wasUp: false }),
+    ).toBe('すこしタコ: ゲームが始まる前に終わりました(終了コード 0)。\n本体の最後の出力: usage: sukoshi-tako-engine run')
+    // 始まったあとに人が閉じたなら、今までどおり何も言わない
+    expect(engineEndNotice({ kind: 'closed', result: { code: 0, signal: null }, sawOutput: true, tail: 'x', wasUp: true })).toBe(null)
+  })
+
   test('a crash counts as a failure, so the pane is not closed quietly', () => {
     expect(engineEndAction({ mode: 'window', hasFailure: true, isPlaying: true })).toBe('markEnded')
   })
@@ -1665,7 +1673,7 @@ describe('本体の起動(argv と環境変数)', () => {
       inputPath: 'C:\\Users\\taro\\AppData\\Local\\Temp\\sukoshi-tako-ab12.input',
     })
     expect(request).toEqual({
-      argv: [root + '\\dist\\sukoshi-tako-engine\\sukoshi-tako.exe'],
+      argv: [root + '\\dist\\sukoshi-tako-engine\\sukoshi-tako.exe', 'run'],
       env: {
         SUKOSHI_TAKO_MODE: 'window',
         SUKOSHI_TAKO_INPUT: 'C:\\Users\\taro\\AppData\\Local\\Temp\\sukoshi-tako-ab12.input',
@@ -1693,8 +1701,8 @@ describe('本体の起動(argv と環境変数)', () => {
         id: 'ab12',
         inputPath: inputPathFor(`C:\\Users\\${user}\\AppData\\Local\\Temp`, 'ab12', 'win32-x64'),
       })
-      expect(request?.argv).toEqual([root + '\\dist\\sukoshi-tako-engine\\sukoshi-tako.exe'])
-      expect(request?.argv.length).toBe(1)
+      // パスは 1 つの引数のまま。そのあとに、本体を始める合図の run が付く
+      expect(request?.argv).toEqual([root + '\\dist\\sukoshi-tako-engine\\sukoshi-tako.exe', 'run'])
       expect(request?.env.SUKOSHI_TAKO_PACK).toBe(root + '\\dist\\sukoshi-tako-engine\\assets.pack')
       expect(request?.env.SUKOSHI_TAKO_INPUT).toBe(`C:\\Users\\${user}\\AppData\\Local\\Temp\\sukoshi-tako-ab12.input`)
       expect(isAbsolutePath(request?.argv[0], 'win32-x64')).toBe(true)
@@ -1723,7 +1731,7 @@ describe('本体の起動(argv と環境変数)', () => {
       id: 'ab12',
       inputPath: '/tmp/sukoshi-tako-ab12.input',
     })
-    expect(request?.argv).toEqual([root + '/dist/sukoshi-tako-engine/sukoshi-tako'])
+    expect(request?.argv).toEqual([root + '/dist/sukoshi-tako-engine/sukoshi-tako', 'run'])
     expect(request?.env.SUKOSHI_TAKO_MODE).toBe('window')
     expect(request?.env.SUKOSHI_TAKO_PACK).toBe(root + '/dist/sukoshi-tako-engine/assets.pack')
     expect(request?.env).not.toHaveProperty('SUKOSHI_TAKO_FRAMES')
@@ -1778,7 +1786,7 @@ describe('開発用の本体の上書き(OS を渡す)', () => {
 
   test('Windows: C:\\ の絶対パスはそのまま argv に。Mac 用の DYLD_ は付けない', () => {
     const request = devEngineRequest({ ...common, platform: 'win32-x64', override: 'C:\\dev\\sukoshi-tako.exe' })
-    expect(request?.argv).toEqual(['C:\\dev\\sukoshi-tako.exe'])
+    expect(request?.argv).toEqual(['C:\\dev\\sukoshi-tako.exe', 'run'])
     expect(request?.env).not.toHaveProperty('DYLD_FRAMEWORK_PATH')
     expect(request?.env.SUKOSHI_TAKO_INPUT).toBe('C:\\T\\a.input')
   })

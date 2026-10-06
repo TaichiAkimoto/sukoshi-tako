@@ -494,7 +494,16 @@ export function engineEnv({ platform, mode, id, inputPath, packPath }) {
 export function launchRequest({ platform, mode, root, asset, engineDir, id, inputPath }) {
   const exe = enginePathFor(root, platform, engineEntryFor(asset, mode))
   if (!exe) return null
-  return { argv: [exe], env: engineEnv({ platform, mode, id, inputPath, packPath: packPathFor(engineDir, platform) }) }
+  return {
+    argv: engineArgv(exe, platform),
+    env: engineEnv({ platform, mode, id, inputPath, packPath: packPathFor(engineDir, platform) }),
+  }
+}
+
+// 本体の起動の引数。Windows / Linux の本体は、run を付けないと使い方を 1 行出して正常終了する
+// (2026-10-06 Windows: /tako:play の直後に「すこしタコは終わりました。」)。Mac の本体は引数を取らない
+export function engineArgv(exe, platform) {
+  return platform === 'darwin' ? [exe] : [exe, 'run']
 }
 
 // 開発用の上書き(SUKOSHI_TAKO_ENGINE。resolveEngineOverride を通った値)の起動の組み立て
@@ -502,7 +511,7 @@ export function devEngineRequest({ override, platform, mode, root, id, inputPath
   const env = engineEnv({ platform, mode, id, inputPath, packPath: null })
   if (override === 'fake') return { argv: ['python3', '-u', root + '/dev/fake_engine.py'], env }
   if (!override) return null
-  if (platform !== 'darwin') return { argv: [override], env }
+  if (platform !== 'darwin') return { argv: engineArgv(override, platform), env }
   // 手元の Mac のビルドは、隣のフレームワークを自分では見つけられない
   const folder = override.slice(0, override.lastIndexOf('/'))
   return { argv: [override], env: { ...env, DYLD_FRAMEWORK_PATH: folder + ':' + folder + '/PackageFrameworks' } }
@@ -548,10 +557,17 @@ export function outputTail(previous, text, max = 400) {
 // 本体が勝手に終わったときの 1 行。人が閉じた・プラグインが止めた・@fatal で理由を出した後は null。
 //   sawOutput  本体が 1 行でも出していたか(出す前に落ちたなら、ウィンドウは開いていない)
 //   tail       本体が最後に出した文字(標準エラー)。頼まれて見る人のために添える
-export function engineEndNotice({ kind, result, sawOutput, tail }) {
-  if (kind !== 'crashed') return null
+//   wasUp      本体が何かを見せるところまで行ったか。行く前に正常終了したなら、人が閉じたのではない
+//              (2026-10-06 Windows: 使い方を 1 行出して終了コード 0。「終わりました」だけでは理由が分からなかった)
+export function engineEndNotice({ kind, result, sawOutput, tail, wasUp }) {
+  const endedEarly = kind === 'closed' && wasUp === false
+  if (kind !== 'crashed' && !endedEarly) return null
   const how = !result ? '終了の記録なし' : result.signal ? 'シグナル ' + result.signal : '終了コード ' + result.code
-  const what = sawOutput ? 'ゲームが途中で終わりました' : 'ゲームのウィンドウを開けませんでした'
+  const what = endedEarly
+    ? 'ゲームが始まる前に終わりました'
+    : sawOutput
+      ? 'ゲームが途中で終わりました'
+      : 'ゲームのウィンドウを開けませんでした'
   const last = String(tail ?? '').trim()
   return 'すこしタコ: ' + what + '(' + how + ')。' + (last ? '\n本体の最後の出力: ' + last : '')
 }

@@ -388,6 +388,8 @@ async function runEngine($) {
   // 本体が 1 行でも出したか、標準出力以外に最後に何を出したか(落ちたときに知らせる)
   let sawOutput = false
   let tail = ''
+  // 本体が何かを見せるところまで行ったか(行く前に正常終了したら、失敗として知らせる)
+  let wasUp = false
   try {
     for (;;) {
       const step = await engine.next()
@@ -405,10 +407,15 @@ async function runEngine($) {
       pending = split.pending
       for (const line of split.lines) {
         const message = parseEngineLine(line)
+        // 決まった形でない行(使い方の案内など)も、落ちたときに添えられるよう覚えておく
+        if (!message) tail = outputTail(tail, line + '\n')
         handleEngineLine($, message)
         // /tako:play が待っていれば、ここで答える(1 回だけ。待つ人がいなければ何もしない)
         if (message?.type === 'fatal') settleStart({ kind: 'failed', text: failureNotice(message.reason) })
-        else if (isEngineUp(message)) settleStart({ kind: 'started' })
+        else if (isEngineUp(message)) {
+          wasUp = true
+          settleStart({ kind: 'started' })
+        }
       }
     }
   } catch (error) {
@@ -433,7 +440,7 @@ async function runEngine($) {
   const kind = classifyEngineEnd({ result, stopRequested, hasFatal: failureKind === 'fatal' })
   $.ui.log('すこしタコの本体が終わりました: ' + kind + ' ' + JSON.stringify(result ?? null), { to: 'debug' })
   // 止めていないのに落ちた。失敗として扱い(黙ってペインを閉じない)、チャットにも知らせる
-  const endNotice = failure ? null : engineEndNotice({ kind, result, sawOutput, tail })
+  const endNotice = failure ? null : engineEndNotice({ kind, result, sawOutput, tail, wasUp })
   if (endNotice) {
     failure = endNotice.split('\n')[0].replace(/^すこしタコ: /, '')
     scene = 'error'
