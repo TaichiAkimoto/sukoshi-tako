@@ -15,6 +15,7 @@ import {
   fetchPlan,
   idlePointer,
   initialState,
+  isEngineUp,
   inputFileText,
   inputPathFor,
   isAbsolutePath,
@@ -30,6 +31,7 @@ import {
   parseEngineAssets,
   parseEngineLine,
   playCommandPlan,
+  playOutcomeText,
   PLAY_STARTING_IN_WINDOW,
   parseEngineManifest,
   platformKey,
@@ -53,6 +55,9 @@ import {
   classifyEngineEnd,
   devEngineRequest,
   engineEndAction,
+  engineEndNotice,
+  failureNotice,
+  outputTail,
   engineEnv,
   launchRequest,
   noBuildText,
@@ -1134,6 +1139,111 @@ describe('playCommandPlan', () => {
   test('the chat line tells the person where to look when nothing shows up', () => {
     expect(PLAY_STARTING_IN_WINDOW).toContain('別のウィンドウ')
     expect(PLAY_STARTING_IN_WINDOW).toContain('すこしタコ')
+  })
+})
+
+// 「始めます」の 1 行は出たのに、ゲームのウィンドウが出ないまま何も言わない(Windows、2026-10-06)。
+// 失敗の理由はペインにしか出ず、本体がすぐ落ちた場合はペインにも出さずに閉じていた。
+describe('失敗はチャットにも知らせる', () => {
+  test('the engine died before it said anything: say the window could not open, with the exit code', () => {
+    expect(engineEndNotice({ kind: 'crashed', result: { code: 3, signal: null }, sawOutput: false, tail: '' })).toBe(
+      'すこしタコ: ゲームのウィンドウを開けませんでした(終了コード 3)。',
+    )
+  })
+
+  test('the engine died after it had started: say it ended, with the exit code', () => {
+    expect(engineEndNotice({ kind: 'crashed', result: { code: 1, signal: null }, sawOutput: true, tail: '' })).toBe(
+      'すこしタコ: ゲームが途中で終わりました(終了コード 1)。',
+    )
+  })
+
+  test('a signal or no record at all is named as such', () => {
+    expect(engineEndNotice({ kind: 'crashed', result: { code: null, signal: 'SIGSEGV' }, sawOutput: false, tail: '' })).toContain(
+      '(シグナル SIGSEGV)',
+    )
+    expect(engineEndNotice({ kind: 'crashed', result: undefined, sawOutput: false, tail: '' })).toContain('(終了の記録なし)')
+  })
+
+  test('what the engine printed last rides along, for whoever is asked to look at it', () => {
+    expect(
+      engineEndNotice({ kind: 'crashed', result: { code: 1, signal: null }, sawOutput: false, tail: ' GLFW: no OpenGL 3.3\n' }),
+    ).toBe('すこしタコ: ゲームのウィンドウを開けませんでした(終了コード 1)。\n本体の最後の出力: GLFW: no OpenGL 3.3')
+  })
+
+  test('closed by the person, stopped by the plugin, or already explained: nothing more to say', () => {
+    for (const kind of ['closed', 'stopped', 'fatal']) {
+      expect(engineEndNotice({ kind, result: { code: 0, signal: null }, sawOutput: true, tail: 'x' })).toBe(null)
+    }
+  })
+
+  test('a crash counts as a failure, so the pane is not closed quietly', () => {
+    expect(engineEndAction({ mode: 'window', hasFailure: true, isPlaying: true })).toBe('markEnded')
+  })
+
+  test('a failure while preparing is passed on as it is', () => {
+    expect(failureNotice('ゲーム本体を取得できませんでした。')).toBe('すこしタコ: ゲーム本体を取得できませんでした。')
+    expect(failureNotice(null)).toBe(null)
+    expect(failureNotice('')).toBe(null)
+  })
+
+  test('only the end of what the engine printed is kept', () => {
+    expect(outputTail('', 'abc')).toBe('abc')
+    expect(outputTail('abc', 'def')).toBe('abcdef')
+    expect(outputTail('a'.repeat(390), 'b'.repeat(20)).length).toBe(400)
+    expect(outputTail('a'.repeat(390), 'b'.repeat(20)).endsWith('b'.repeat(20))).toBe(true)
+  })
+})
+
+// デスクトップアプリのチャットに確実に出せるのは、コマンドの返事だけ(あとから足す知らせは出ない。
+// 2026-10-06 に同じ通信で確かめた)。だから /tako:play は、始まったか失敗したかが分かるまで待って答える。
+describe('playOutcomeText', () => {
+  test('the engine answered: say it started and where it is', () => {
+    const text = playOutcomeText({ kind: 'started' })
+    expect(text).toContain('始めました')
+    expect(text).toContain('別のウィンドウ')
+  })
+
+  test('it failed: the reason is the answer', () => {
+    expect(playOutcomeText({ kind: 'failed', text: 'すこしタコ: ゲームのウィンドウを開けませんでした(終了コード 3)。' })).toBe(
+      'すこしタコ: ゲームのウィンドウを開けませんでした(終了コード 3)。',
+    )
+  })
+
+  test('still fetching when the wait ran out: say so and what to do', () => {
+    const text = playOutcomeText({ kind: 'waiting' })
+    expect(text).toContain('準備')
+    expect(text).toContain('/tako:play')
+  })
+
+  test('launched but silent when the wait ran out: say it may not have opened', () => {
+    const text = playOutcomeText({ kind: 'silent' })
+    expect(text).toContain('起動しました')
+    expect(text).toContain('ウィンドウが出ない')
+  })
+
+  test('already running, stopped meanwhile, or closed right away', () => {
+    expect(playOutcomeText({ kind: 'running' })).toContain('もう')
+    expect(playOutcomeText({ kind: 'cancelled' })).toContain('止めました')
+    expect(playOutcomeText({ kind: 'ended' })).toContain('終わりました')
+  })
+
+  test('the engine counts as up once it shows something, not while it is still loading', () => {
+    expect(isEngineUp({ type: 'state', state: 'loading' })).toBe(false)
+    expect(isEngineUp({ type: 'state', state: 'starting' })).toBe(false)
+    expect(isEngineUp({ type: 'fatal', reason: 'x' })).toBe(false)
+    expect(isEngineUp(null)).toBe(false)
+    expect(isEngineUp({ type: 'state', state: 'menu' })).toBe(true)
+    expect(isEngineUp({ type: 'state', state: 'hide' })).toBe(true)
+    expect(isEngineUp({ type: 'stages', stages: [] })).toBe(true)
+    expect(isEngineUp({ type: 'frame', name: 'f' })).toBe(true)
+    expect(isEngineUp({ type: 'hud', text: 'h' })).toBe(true)
+  })
+
+  test('every answer names the game, and none is empty', () => {
+    for (const kind of ['started', 'waiting', 'silent', 'running', 'cancelled', 'ended']) {
+      expect(playOutcomeText({ kind })).toContain('すこしタコ')
+    }
+    expect(playOutcomeText({ kind: 'failed', text: '' })).toContain('すこしタコ')
   })
 })
 

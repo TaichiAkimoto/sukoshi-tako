@@ -10,11 +10,15 @@ import {
   canShowPixels,
   checksumMatches,
   engineEndAction,
+  engineEndNotice,
+  failureNotice,
+  outputTail,
   fetchPlan,
   idlePointer,
   initialState,
   inputFileText,
   inputPathFor,
+  isEngineUp,
   isStartStillWanted,
   isPlayingPhase,
   launchRequest,
@@ -29,6 +33,8 @@ import {
   parseEngineLine,
   platformKey,
   playCommandPlan,
+  playOutcomeText,
+  START_WAIT_MS,
   playMode,
   pushEvent,
   reduce,
@@ -245,7 +251,7 @@ async function downloadEngine($) {
   }
   showStatus('ゲーム本体を取得しています(約 7 MB)…')
   const fetched = await $.process.run(plan.download, { timeoutMs: 10 * 60 * 1000 })
-  if (fetched.exitCode !== 0) throw new Error('ゲーム本体を取得できませんでした。')
+  if (fetched.exitCode !== 0) throw new Error('ゲーム本体を取得できませんでした(取得の終了コード ' + fetched.exitCode + ')。')
   const sum = await $.process.run(plan.hash)
   if (sum.exitCode !== 0 || !checksumMatches(sum.stdout, asset.sha256)) {
     await $.process.run(plan.removeArchive)
@@ -257,7 +263,7 @@ async function downloadEngine($) {
   await $.process.run(plan.makeDist)
   const unpacked = await $.process.run(plan.unpack)
   await $.process.run(plan.removeArchive)
-  if (unpacked.exitCode !== 0) throw new Error('取得したファイルを展開できませんでした。')
+  if (unpacked.exitCode !== 0) throw new Error('取得したファイルを展開できませんでした(展開の終了コード ' + unpacked.exitCode + ')。')
   await $.fs.write(plan.marker, asset.sha256 + '\n')
   showStatus(null)
   return { platform, asset, plan }
@@ -298,6 +304,42 @@ async function engineRequest($, id) {
   return request
 }
 
+// /tako:play が待っている「始まったか、失敗したか」。分かった時点で 1 回だけ答える
+let startWaiters = []
+
+function settleStart(outcome) {
+  const waiters = startWaiters
+  startWaiters = []
+  for (const settle of waiters) settle(outcome)
+}
+
+// 上限まで待って分からなければ、その時点の様子(まだ準備中 / 起動したが無言)で答える
+function waitForStart($) {
+  return new Promise((resolve) => {
+    let isDone = false
+    let timer = null
+    const settle = (outcome) => {
+      if (isDone) return
+      isDone = true
+      timer?.cancel()
+      resolve(outcome)
+    }
+    startWaiters.push(settle)
+    timer = $.clock.after(START_WAIT_MS, () => settle({ kind: engine ? 'silent' : 'waiting' }))
+  })
+}
+
+// 失敗をチャットにも 1 行出す(ペインが見えていない人にも届くように)。モデルには読ませない。
+// チャットに書けない場所では、通知で出す
+async function tellInChat($, text) {
+  if (!text) return
+  try {
+    await $.session.append({ message: { type: 'system', content: [{ type: 'text', text }] } })
+  } catch {
+    $.ui.toast(text, { timeoutMs: 15000 })
+  }
+}
+
 async function runEngine($) {
   // await の前に立てる。待っている間にもう一度呼ばれても、二重には起動しない
   isStarting = true
@@ -323,6 +365,8 @@ async function runEngine($) {
     failureKind = error.failureKind ?? null
     downloadStatus = null
     $.ui.invalidate('ui.render')
+    settleStart({ kind: 'failed', text: failureNotice(failure) })
+    await tellInChat($, failureNotice(failure))
     return
   } finally {
     isStarting = false
@@ -332,6 +376,7 @@ async function runEngine($) {
     inputPath = null
     scene = 'menu'
     downloadStatus = null
+    settleStart({ kind: 'cancelled' })
     return
   }
   await writeInput($)
@@ -340,6 +385,9 @@ async function runEngine($) {
   let pending = ''
   // 終わり方({ code, signal })。止められたときは無い
   let result
+  // 本体が 1 行でも出したか、標準出力以外に最後に何を出したか(落ちたときに知らせる)
+  let sawOutput = false
+  let tail = ''
   try {
     for (;;) {
       const step = await engine.next()
@@ -348,14 +396,27 @@ async function runEngine($) {
         break
       }
       const { stream, text } = step.value
-      if (stream !== 'stdout') continue
+      if (stream !== 'stdout') {
+        tail = outputTail(tail, text)
+        continue
+      }
+      sawOutput = true
       const split = splitLines(pending, text)
       pending = split.pending
-      for (const line of split.lines) handleEngineLine($, parseEngineLine(line))
+      for (const line of split.lines) {
+        const message = parseEngineLine(line)
+        handleEngineLine($, message)
+        // /tako:play が待っていれば、ここで答える(1 回だけ。待つ人がいなければ何もしない)
+        if (message?.type === 'fatal') settleStart({ kind: 'failed', text: failureNotice(message.reason) })
+        else if (isEngineUp(message)) settleStart({ kind: 'started' })
+      }
     }
   } catch (error) {
     $.ui.log('すこしタコを起動できませんでした: ' + error, { to: 'debug' })
     failure = 'ゲームを起動できませんでした。'
+    const spawnNotice = failureNotice(failure + '(' + String(error?.message ?? error).slice(0, 200) + ')')
+    settleStart({ kind: 'failed', text: spawnNotice })
+    await tellInChat($, spawnNotice)
   } finally {
     // 流し読みが途中で失敗しても、子を残さない(for await なら自動で呼ばれる後始末を、手動のループでも行う)
     await engine?.return?.().catch(() => {})
@@ -371,6 +432,17 @@ async function runEngine($) {
   // 画面の扱いは Mac と同じで、OS によらない。見分けの結果は診断のログにだけ残す
   const kind = classifyEngineEnd({ result, stopRequested, hasFatal: failureKind === 'fatal' })
   $.ui.log('すこしタコの本体が終わりました: ' + kind + ' ' + JSON.stringify(result ?? null), { to: 'debug' })
+  // 止めていないのに落ちた。失敗として扱い(黙ってペインを閉じない)、チャットにも知らせる
+  const endNotice = failure ? null : engineEndNotice({ kind, result, sawOutput, tail })
+  if (endNotice) {
+    failure = endNotice.split('\n')[0].replace(/^すこしタコ: /, '')
+    scene = 'error'
+    $.ui.invalidate('ui.render')
+    settleStart({ kind: 'failed', text: endNotice })
+    await tellInChat($, endNotice)
+  }
+  // 待っている人がまだいれば(出す前に人が閉じた・止めた)、終わったことを答える
+  settleStart({ kind: stopRequested ? 'cancelled' : 'ended' })
   const action = engineEndAction({ mode: state.mode, hasFailure: Boolean(failure), isPlaying: isPlayingPhase(state.phase) })
   if (action === 'closePane') {
     // ウィンドウ方式で、ゲームのウィンドウを人が閉じた。失敗ではないので、ペインも静かに閉じる
@@ -424,6 +496,7 @@ function handleEngineLine($, message) {
       failure = message.reason
       failureKind = 'fatal'
       $.ui.invalidate('ui.render')
+      void tellInChat($, failureNotice(failure))
       break
   }
 }
@@ -637,9 +710,16 @@ export function register(on) {
       // ペインが開くのを待たない。開けなかった・見えていないときも、チャットの 1 行は必ず返る
       if (plan.mode !== state.mode) await dispatch($, { type: 'setMode', mode: plan.mode })
       await dispatch($, { type: 'openedByPerson' })
-      void startPlaying($)
       void $.ui.open(paneOpenArgs(PANE, TITLE)).catch(() => {})
-      return { text: plan.text }
+      if (engine) {
+        await startPlaying($)
+        return { text: playOutcomeText({ kind: 'running' }) }
+      }
+      // 始まったか失敗したかが分かるまで待って、返事に載せる(あとから足す知らせは、
+      // デスクトップアプリのチャットに出ない)
+      const outcome = waitForStart($)
+      void startPlaying($)
+      return { text: playOutcomeText(await outcome) }
     })
   }
 

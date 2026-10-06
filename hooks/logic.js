@@ -530,6 +530,72 @@ export function engineEndAction({ mode, hasFailure, isPlaying }) {
   return isPlaying ? 'markEnded' : 'none'
 }
 
+// ---- 失敗をチャットにも知らせる ----
+//
+// 失敗の理由はペインに出すが、ペインが見えていない人には届かない(Windows のデスクトップアプリ、
+// 2026-10-06: 「始めます」の後、ウィンドウが出ないまま何も言わなかった)。同じ文をチャットにも 1 行出す。
+
+// 取得や起動の準備で失敗したときの 1 行。失敗が無ければ null
+export function failureNotice(failure) {
+  return failure ? 'すこしタコ: ' + failure : null
+}
+
+// 本体が出した文字の終わりだけを覚えておく(落ちたときに添える)
+export function outputTail(previous, text, max = 400) {
+  return (previous + text).slice(-max)
+}
+
+// 本体が勝手に終わったときの 1 行。人が閉じた・プラグインが止めた・@fatal で理由を出した後は null。
+//   sawOutput  本体が 1 行でも出していたか(出す前に落ちたなら、ウィンドウは開いていない)
+//   tail       本体が最後に出した文字(標準エラー)。頼まれて見る人のために添える
+export function engineEndNotice({ kind, result, sawOutput, tail }) {
+  if (kind !== 'crashed') return null
+  const how = !result ? '終了の記録なし' : result.signal ? 'シグナル ' + result.signal : '終了コード ' + result.code
+  const what = sawOutput ? 'ゲームが途中で終わりました' : 'ゲームのウィンドウを開けませんでした'
+  const last = String(tail ?? '').trim()
+  return 'すこしタコ: ' + what + '(' + how + ')。' + (last ? '\n本体の最後の出力: ' + last : '')
+}
+
+// /tako:play の返事。始まったか失敗したかが分かってから答える(分かるまでの上限は START_WAIT_MS)。
+// デスクトップアプリのチャットに確実に出せるのはコマンドの返事だけなので、理由はここに載せる。
+//   started    本体が最初の 1 行を出した(= 起動した)
+//   failed     取得・照合・展開・起動のどこかで失敗した、または出す前に落ちた(text が理由)
+//   waiting    上限まで待っても、まだ取得や展開の途中
+//   silent     起動はしたが、上限まで待っても本体が何も出さない
+//   running    もう動いている
+//   cancelled  待っている間にオフにした・ペインを閉じた
+//   ended      待っている間に、人がウィンドウを閉じた
+export const START_WAIT_MS = 60 * 1000
+
+// 本体が「何かを見せている」と言えるか。読み込み中の知らせだけでは、まだ起動したと言わない
+// (ウィンドウを作れずに、そのあと落ちることがある)
+export function isEngineUp(message) {
+  if (!message) return false
+  if (message.type === 'state') return message.state !== 'loading' && message.state !== 'starting'
+  return message.type === 'frame' || message.type === 'hud' || message.type === 'stages'
+}
+
+export function playOutcomeText(outcome) {
+  switch (outcome?.kind) {
+    case 'started':
+      return 'すこしタコを始めました。ゲームは別のウィンドウで開いています(ほかのウィンドウの後ろに隠れていることがあります)。'
+    case 'failed':
+      return outcome.text || 'すこしタコ: ゲームを始められませんでした。'
+    case 'waiting':
+      return 'すこしタコを準備しています(ゲーム本体の取得に時間がかかっています)。1 分ほど待ってもウィンドウが出ないときは、もう一度 /tako:play を送ってください。'
+    case 'silent':
+      return 'すこしタコのゲーム本体を起動しましたが、まだ応答がありません。ウィンドウが出ないときは、もう一度 /tako:play を送ると理由が出ます。'
+    case 'running':
+      return 'すこしタコは、もう別のウィンドウで動いています。'
+    case 'cancelled':
+      return 'すこしタコを止めました。'
+    case 'ended':
+      return 'すこしタコは終わりました。'
+    default:
+      return PLAY_STARTING_IN_WINDOW
+  }
+}
+
 // ---- メニュー ----
 
 // コース選択のボタンの中身(onPress は register.js が足す)。
